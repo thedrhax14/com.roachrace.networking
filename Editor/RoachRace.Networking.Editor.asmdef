@@ -1,0 +1,21 @@
+{
+    "name": "RoachRace.Networking.Editor",
+    "rootNamespace": "RoachRace.Networking.Editor",
+    "references": [
+        "RoachRace.Networking",
+        "FishNet.Runtime",
+        "RoachRace.Data",
+        "RoachRace.Controls"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

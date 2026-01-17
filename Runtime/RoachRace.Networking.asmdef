@@ -1,0 +1,28 @@
+{
+    "name": "RoachRace.Networking",
+    "rootNamespace": "RoachRace.Networking",
+    "references": [
+        "GUID:af26f5b98d6e94d13ab8e127aef70dbb",
+        "GUID:1ef91177351374300b98ae13223c1218",
+        "GUID:a774d51f612904007aff26cd5d0eb855",
+        "GUID:d0b278354039847349568d42f70a776a",
+        "GUID:7c88a4a7926ee5145ad2dfa06f454c67",
+        "GUID:11accb3f77969894f8bbe9a1772b2fd1",
+        "GUID:fc86b500fdf9bed47bae1978dd7a9a0e",
+        "GUID:fe54a6eae90837846a41c67216cb6c8a",
+        "GUID:bef7f1246b968e04096165af98b4f824",
+        "GUID:e490e8c2200334e0db84d14f10570995",
+        "GUID:61106e8dfb7a4e64a96af0eccfe1209f",
+        "GUID:75469ad4d38634e559750d17036d5f7c",
+        "GUID:9e24947de15b9834991c9d8411ea37cf"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
