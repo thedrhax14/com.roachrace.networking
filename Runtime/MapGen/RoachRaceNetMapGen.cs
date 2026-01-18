@@ -4,7 +4,6 @@ using System.IO;
 using UnityEngine.AddressableAssets;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.AddressableAssets.ResourceLocators;
-using UnityEngine.ResourceManagement.ResourceProviders;
 
 namespace RoachRace.Networking
 {
@@ -13,21 +12,55 @@ namespace RoachRace.Networking
           public string catalogFileName = "catalog_0.1.1.bin";
           public string mapGenAddress = "MapGen";
 
+          bool _loadRequested;
+
           public override void OnStartServer()
           {
                base.OnStartServer();
-               LoadCatalog();
+
+               // Do not auto-load Addressables catalogs in the Unity Editor.
+               // During Play Mode, use the custom inspector button to trigger it manually.
+               if (Application.isEditor) return;
+
+               TryLoadCatalog();
           }
 
           public override void OnStartClient()
           {
                base.OnStartClient();
                if(IsServerInitialized) return;
-               LoadCatalog();
+
+               // Do not auto-load Addressables catalogs in the Unity Editor.
+               // During Play Mode, use the custom inspector button to trigger it manually.
+               if (Application.isEditor) return;
+
+               TryLoadCatalog();
           }
 
-          void LoadCatalog()
+          /// <summary>
+          /// Manually trigger catalog loading. Intended for use by an Editor inspector button during Play Mode.
+          /// Safe to call multiple times; only the first call will do work.
+          /// </summary>
+          public void LoadCatalogFromInspector()
           {
+               if (!Application.isPlaying)
+               {
+                    Debug.LogWarning($"[{nameof(RoachRaceNetMapGen)}] LoadCatalogFromInspector was called while not playing. Enter Play Mode first.", gameObject);
+                    return;
+               }
+
+               TryLoadCatalog();
+          }
+
+          void TryLoadCatalog()
+          {
+               if (_loadRequested)
+               {
+                    Debug.Log($"[{nameof(RoachRaceNetMapGen)}] Catalog load already requested; skipping duplicate request.", gameObject);
+                    return;
+               }
+               _loadRequested = true;
+
                string platformFolder = Application.platform == RuntimePlatform.OSXEditor ? "StandaloneOSX" :
                                         Application.platform == RuntimePlatform.WindowsEditor ? "StandaloneWindows" :
                                         Application.platform == RuntimePlatform.LinuxEditor ? "StandaloneLinux64" :
