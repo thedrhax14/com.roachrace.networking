@@ -1,84 +1,42 @@
 using FishNet.Connection;
 using FishNet.Object;
-using RoachRace.Interaction;
 using RoachRace.Networking.Inventory;
 using RoachRace.UI.Models;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
+
 namespace RoachRace.Networking.Input
 {
     /// <summary>
-    /// Forwards a chosen input (Aim or UseItem) to use a specific inventory item id.
+    /// Listens to an InputAction and triggers <see cref="NetworkPlayerInventory.TryUseByItemId" /> for a configured item id.
     ///
     /// Setup:
-    /// - Add this component to a player object with <see cref="NetworkPlayerInventory" /> or under it as child.
-    /// - Assign <see cref="itemDefinition" /> (recommended) or set <see cref="itemId" /> manually.
-    /// - Assign <see cref="inputActionReference" />.
+    /// - Add this component to a player object with <see cref="NetworkPlayerInventory" /> (or under it as a child).
+    /// - Assign <see cref="config" /> (holds item id, input action, thresholds, prompt settings, etc).
     ///
-    /// Behavior:
-    /// - When the configured input is pressed, this calls <see cref="NetworkPlayerInventory.TryUseByItemId" /> using <see cref="itemId" />.
-    /// - Optional hold: require the input to be held for <see cref="holdDurationSeconds" /> before triggering.
-    /// - Optional auto-repeat: if enabled, re-triggers every <see cref="repeatIntervalSeconds" /> while held.
+    /// Notes:
+    /// - This only binds input for the owning client (FishNet ownership).
+    /// - Optional hold and auto-repeat behavior are configured in the ScriptableObject.
     /// </summary>
-    public sealed class OwnedUseSpecificItemInputForwarder : NetworkBehaviour
+    public sealed class NetworkItemUseInputListener : NetworkBehaviour
     {
-        private const float DefaultPressedThreshold = 0.1f;
-
-        [Header("Debug")]
-        [SerializeField] private bool logBinding = false;
-        [SerializeField] private bool logInputEvents = false;
-
-        [Header("Item")]
-        [Tooltip("Optional. Assign an ItemDefinition to keep itemId in sync.")]
-        [SerializeField] private ItemDefinition itemDefinition;
-
-        [Tooltip("ItemDefinition id to use. 0 is reserved for empty.")]
-        [SerializeField] private ushort itemId;
-
-        [Header("Input")]
-        [Tooltip("Input Action Reference to use (required).")]
-        [SerializeField] private InputActionReference inputActionReference;
+        [Header("Config")]
+        [Tooltip("Non-scene settings for this input forwarder (required).")]
+        [SerializeField] private NetworkItemUseInputListenerConfig config;
 
         private InputAction _boundAction;
 
-        [Tooltip("Analog press threshold for UseItem.")]
-        [SerializeField, Range(0f, 1f)] private float pressedThreshold = DefaultPressedThreshold;
-
-        [Tooltip("Seconds the input must be held before first trigger. 0 = immediate.")]
-        [SerializeField, Min(0f)] private float holdDurationSeconds = 0f;
-
-        [Tooltip("If true, re-triggers while held after the first trigger.")]
-        [SerializeField] private bool autoRepeat = false;
-
-        [Tooltip("Seconds between repeats while held (only used when Auto Repeat is enabled).")]
-        [SerializeField, Min(0.01f)] private float repeatIntervalSeconds = 0.2f;
-
         [Header("Aim (for aim-required items)")]
-        [Tooltip("If true, uses an aim ray (origin/direction) when invoking the inventory use call.")]
-        [SerializeField] private bool useAimRay = true;
-
         [Tooltip("Optional override for aim ray source. If null, uses Camera.main when available, otherwise this transform.")]
         [SerializeField] private Transform aimTransform;
 
         [Header("Action Prompt (UI)")]
-        [Tooltip("Optional. If assigned, this forwarder will update the model for an on-screen action prompt widget.")]
-        [SerializeField] private ActionPromptModel promptModel;
-
-        [Tooltip("Optional key icon (eg gamepad button or keyboard key image).")]
-        [SerializeField] private Sprite promptKeyIcon;
-
-        [Tooltip("Optional key text (eg 'E', 'LMB', 'RT').")]
-        [SerializeField] private string promptKeyText;
-
-        [Tooltip("Optional override for the displayed action name. If empty, uses ItemDefinition.displayName when available.")]
-        [SerializeField] private string promptActionName;
-
-        [Tooltip("If true, shows UsesLeft based on inventory counts for the configured item id.")]
-        [SerializeField] private bool showUsesLeft = true;
-
-        [Tooltip("How often to refresh uses-left while owned (seconds).")]
-        [SerializeField, Min(0.05f)] private float usesLeftRefreshSeconds = 0.25f;
+        [Tooltip("Optional override for the prompt model. If null, uses the one from the Config.")]
+        [SerializeField] private ActionPromptModel promptModelOverride;
 
         [Header("Dependencies")]
         [Tooltip("Optional. If not assigned, will auto-resolve on Awake.")]
@@ -98,20 +56,49 @@ namespace RoachRace.Networking.Input
         protected override void OnValidate()
         {
             base.OnValidate();
-            if (itemDefinition == null) return;
-            if (itemDefinition.id == 0) return;
-            itemId = itemDefinition.id;
-            gameObject.name = $"UseItem-{itemDefinition.displayName}";
+
+            // Help catch missing config early. Avoid log spam by warning once per Editor session per instance.
+            string warnKey = $"{nameof(NetworkItemUseInputListener)}.{GetInstanceID()}.MissingConfigWarned";
+            if (config == null)
+            {
+                if (!SessionState.GetBool(warnKey, false))
+                {
+                    SessionState.SetBool(warnKey, true);
+                    Debug.LogWarning($"[{nameof(NetworkItemUseInputListener)}] Config is not assigned on '{gameObject.name}'.", gameObject);
+                }
+                return;
+            }
+
+            // If it becomes valid again, allow future warnings if it is later cleared.
+            SessionState.SetBool(warnKey, false);
+
+            if (config == null) return;
+            if (config.ItemDefinition == null) return;
+            if (config.ItemDefinition.id == 0) return;
+            gameObject.name = $"UseItem-{config.ItemDefinition.displayName}";
         }
 #endif
 
         private void Awake()
         {
-            inventory = GetComponentInParent<NetworkPlayerInventory>();
+            if (config == null)
+            {
+                Debug.LogError($"[{nameof(NetworkItemUseInputListener)}] Config is not assigned on '{gameObject.name}'.", gameObject);
+                throw new System.NullReferenceException($"[{nameof(NetworkItemUseInputListener)}] Config is null on GameObject '{gameObject.name}'.");
+            }
+
+            if (config.InputActionReference == null)
+            {
+                Debug.LogError($"[{nameof(NetworkItemUseInputListener)}] Config.InputActionReference is not assigned on '{gameObject.name}'.", gameObject);
+                throw new System.NullReferenceException($"[{nameof(NetworkItemUseInputListener)}] Config.InputActionReference is null on GameObject '{gameObject.name}'.");
+            }
+
+            if (inventory == null)
+                inventory = GetComponentInParent<NetworkPlayerInventory>();
             if (inventory == null)
             {
-                Debug.LogError($"[{nameof(OwnedUseSpecificItemInputForwarder)}] NetworkPlayerInventory is not assigned and was not found on '{gameObject.name}'.", gameObject);
-                throw new System.NullReferenceException($"[{nameof(OwnedUseSpecificItemInputForwarder)}] NetworkPlayerInventory is null on GameObject '{gameObject.name}'.");
+                Debug.LogError($"[{nameof(NetworkItemUseInputListener)}] NetworkPlayerInventory is not assigned and was not found on '{gameObject.name}'.", gameObject);
+                throw new System.NullReferenceException($"[{nameof(NetworkItemUseInputListener)}] NetworkPlayerInventory is null on GameObject '{gameObject.name}'.");
             }
         }
 
@@ -143,12 +130,12 @@ namespace RoachRace.Networking.Input
             else
                 UnbindInputAction();
 
-            if (logBinding)
+            if (config.LogBinding)
             {
-                string actionName = inputActionReference != null && inputActionReference.action != null
-                    ? inputActionReference.action.name
+                string actionName = config.InputActionReference != null && config.InputActionReference.action != null
+                    ? config.InputActionReference.action.name
                     : "<null>";
-                Debug.Log($"[{nameof(OwnedUseSpecificItemInputForwarder)}] RefreshBinding on '{gameObject.name}': IsOwner={IsOwner} OwnerId={OwnerId} action={actionName} bound={_boundAction != null}", gameObject);
+                Debug.Log($"[{nameof(NetworkItemUseInputListener)}] RefreshBinding on '{gameObject.name}': IsOwner={IsOwner} OwnerId={OwnerId} action={actionName} bound={_boundAction != null}", gameObject);
             }
 
             ResetHoldState();
@@ -160,16 +147,16 @@ namespace RoachRace.Networking.Input
             if (_boundAction != null)
                 return;
 
-            if (inputActionReference == null)
+            if (config == null || config.InputActionReference == null)
             {
-                Debug.LogWarning($"[{nameof(OwnedUseSpecificItemInputForwarder)}] No InputActionReference assigned on '{gameObject.name}'.", gameObject);
+                Debug.LogWarning($"[{nameof(NetworkItemUseInputListener)}] No Config/InputActionReference assigned on '{gameObject.name}'.", gameObject);
                 return;
             }
 
-            InputAction action = inputActionReference.action;
+            InputAction action = config.InputActionReference.action;
             if (action == null)
             {
-                Debug.LogWarning($"[{nameof(OwnedUseSpecificItemInputForwarder)}] inputActionReference has no action assigned.", gameObject);
+                Debug.LogWarning($"[{nameof(NetworkItemUseInputListener)}] inputActionReference has no action assigned.", gameObject);
                 return;
             }
 
@@ -181,15 +168,15 @@ namespace RoachRace.Networking.Input
             if (!_boundAction.enabled)
             {
                 _boundAction.Enable();
-                if (logBinding)
-                    Debug.Log($"[{nameof(OwnedUseSpecificItemInputForwarder)}] Enabled '{_boundAction.name}' (assetInstanceId={_boundAction.actionMap?.asset?.GetInstanceID()}).", gameObject);
+                if (config.LogBinding)
+                    Debug.Log($"[{nameof(NetworkItemUseInputListener)}] Enabled '{_boundAction.name}' (assetInstanceId={_boundAction.actionMap?.asset?.GetInstanceID()}).", gameObject);
             }
 
             _boundAction.performed += OnBoundActionChanged;
             _boundAction.canceled += OnBoundActionChanged;
 
-            if (logBinding)
-                Debug.Log($"[{nameof(OwnedUseSpecificItemInputForwarder)}] Bound '{_boundAction.name}' on '{gameObject.name}'.", gameObject);
+            if (config.LogBinding)
+                Debug.Log($"[{nameof(NetworkItemUseInputListener)}] Bound '{_boundAction.name}' on '{gameObject.name}'.", gameObject);
         }
 
         private void UnbindInputAction()
@@ -200,16 +187,16 @@ namespace RoachRace.Networking.Input
             _boundAction.performed -= OnBoundActionChanged;
             _boundAction.canceled -= OnBoundActionChanged;
 
-            if (logBinding)
-                Debug.Log($"[{nameof(OwnedUseSpecificItemInputForwarder)}] Unbound '{_boundAction.name}' on '{gameObject.name}'.", gameObject);
+            if (config != null && config.LogBinding)
+                Debug.Log($"[{nameof(NetworkItemUseInputListener)}] Unbound '{_boundAction.name}' on '{gameObject.name}'.", gameObject);
 
             _boundAction = null;
         }
 
         private void OnBoundActionChanged(InputAction.CallbackContext ctx)
         {
-            if (logInputEvents)
-                Debug.Log($"[{nameof(OwnedUseSpecificItemInputForwarder)}] Action '{ctx.action.name}' phase={ctx.phase} enabled={ctx.action.enabled} IsOwner={IsOwner} OwnerId={OwnerId}", gameObject);
+            if (config != null && config.LogInputEvents)
+                Debug.Log($"[{nameof(NetworkItemUseInputListener)}] Action '{ctx.action.name}' phase={ctx.phase} enabled={ctx.action.enabled} IsOwner={IsOwner} OwnerId={OwnerId}", gameObject);
 
             if (!IsOwner || !IsClientInitialized)
                 return;
@@ -224,7 +211,8 @@ namespace RoachRace.Networking.Input
                 value = ctx.ReadValueAsButton() ? 1f : 0f;
             }
 
-            HandlePressed(value > pressedThreshold);
+            float threshold = config != null ? config.PressedThreshold : 0.1f;
+            HandlePressed(value > threshold);
         }
 
         private void HandlePressed(bool pressed)
@@ -237,7 +225,8 @@ namespace RoachRace.Networking.Input
                 _nextRepeatTime = float.PositiveInfinity;
 
                 // If no hold required, trigger immediately.
-                if (holdDurationSeconds <= 0f)
+                float holdSeconds = config != null ? config.HoldDurationSeconds : 0f;
+                if (holdSeconds <= 0f)
                     TriggerOnceOrScheduleRepeat();
             }
             else if (!pressed && _isHeld)
@@ -253,7 +242,7 @@ namespace RoachRace.Networking.Input
             if (!IsOwner || !IsClientInitialized)
                 return;
 
-            if (inputActionReference == null)
+            if (config == null || config.InputActionReference == null)
                 return;
 
             UpdatePromptModel();
@@ -266,22 +255,26 @@ namespace RoachRace.Networking.Input
             // Wait until the hold duration elapses before first trigger.
             if (!_hasTriggeredThisHold)
             {
-                if (now - _holdStartTime >= holdDurationSeconds)
+                if (now - _holdStartTime >= config.HoldDurationSeconds)
                     TriggerOnceOrScheduleRepeat();
 
                 return;
             }
 
             // After first trigger, handle repeat if enabled.
-            if (autoRepeat && now >= _nextRepeatTime)
+            if (config.AutoRepeat && now >= _nextRepeatTime)
             {
                 TriggerInternal();
-                _nextRepeatTime = now + Mathf.Max(0.01f, repeatIntervalSeconds);
+                _nextRepeatTime = now + Mathf.Max(0.01f, config.RepeatIntervalSeconds);
             }
         }
 
         private void UpdatePromptModel()
         {
+            if (config == null)
+                return;
+
+            ActionPromptModel promptModel = promptModelOverride != null ? promptModelOverride : config.PromptModel;
             if (promptModel == null)
                 return;
 
@@ -290,11 +283,11 @@ namespace RoachRace.Networking.Input
             {
                 _promptInitialized = true;
                 promptModel.SetVisible(true);
-                promptModel.SetKey(promptKeyIcon, promptKeyText);
+                promptModel.SetKey(config.PromptKeyIcon, config.PromptKeyText);
 
-                string actionName = !string.IsNullOrWhiteSpace(promptActionName)
-                    ? promptActionName
-                    : (itemDefinition != null ? itemDefinition.displayName : string.Empty);
+                string actionName = !string.IsNullOrWhiteSpace(config.PromptActionName)
+                    ? config.PromptActionName
+                    : (config.ItemDefinition != null ? config.ItemDefinition.displayName : string.Empty);
                 promptModel.SetActionName(actionName);
 
                 _lastHoldProgress01 = -1f;
@@ -303,12 +296,12 @@ namespace RoachRace.Networking.Input
             }
 
             // Uses-left (throttled)
-            if (showUsesLeft)
+            if (config.ShowUsesLeft)
             {
                 float now = Time.unscaledTime;
                 if (now >= _nextUsesLeftRefreshTime)
                 {
-                    _nextUsesLeftRefreshTime = now + Mathf.Max(0.05f, usesLeftRefreshSeconds);
+                    _nextUsesLeftRefreshTime = now + Mathf.Max(0.05f, config.UsesLeftRefreshSeconds);
                     int usesLeft = GetUsesLeft();
                     if (usesLeft != _lastUsesLeft)
                     {
@@ -331,12 +324,12 @@ namespace RoachRace.Networking.Input
 
                 if (!_hasTriggeredThisHold)
                 {
-                    if (holdDurationSeconds > 0f)
-                        progress01 = Mathf.Clamp01((now - _holdStartTime) / Mathf.Max(0.0001f, holdDurationSeconds));
+                    if (config.HoldDurationSeconds > 0f)
+                        progress01 = Mathf.Clamp01((now - _holdStartTime) / Mathf.Max(0.0001f, config.HoldDurationSeconds));
                 }
-                else if (autoRepeat)
+                else if (config.AutoRepeat)
                 {
-                    float interval = Mathf.Max(0.01f, repeatIntervalSeconds);
+                    float interval = Mathf.Max(0.01f, config.RepeatIntervalSeconds);
                     progress01 = 1f - Mathf.Clamp01((_nextRepeatTime - now) / interval);
                 }
             }
@@ -351,7 +344,8 @@ namespace RoachRace.Networking.Input
         private int GetUsesLeft()
         {
             if (inventory == null) return -1;
-            if (itemId == 0) return -1;
+            if (config == null) return -1;
+            if (config.ItemId == 0) return -1;
 
             // If we have a definition and it doesn't consume inventory on use, "uses left" might be meaningless.
             // Still allow showing if explicitly enabled (showUsesLeft).
@@ -361,7 +355,7 @@ namespace RoachRace.Networking.Input
             {
                 var s = slots[i];
                 if (s.IsEmpty) continue;
-                if (s.ItemId != itemId) continue;
+                if (s.ItemId != config.ItemId) continue;
                 total += s.Count;
             }
 
@@ -373,23 +367,26 @@ namespace RoachRace.Networking.Input
             TriggerInternal();
             _hasTriggeredThisHold = true;
 
-            if (autoRepeat)
-                _nextRepeatTime = Time.unscaledTime + Mathf.Max(0.01f, repeatIntervalSeconds);
+            if (config != null && config.AutoRepeat)
+                _nextRepeatTime = Time.unscaledTime + Mathf.Max(0.01f, config.RepeatIntervalSeconds);
         }
 
         private void TriggerInternal()
         {
-            if (itemId == 0)
+            if (config == null)
+                return;
+
+            if (config.ItemId == 0)
             {
-                Debug.LogWarning($"[{nameof(OwnedUseSpecificItemInputForwarder)}] itemId is 0 (reserved). Assign an ItemDefinition or a non-zero id.", gameObject);
+                Debug.LogWarning($"[{nameof(NetworkItemUseInputListener)}] itemId is 0 (reserved). Assign an ItemDefinition or a non-zero id.", gameObject);
                 return;
             }
 
             // Server-authoritative behavior is handled by NetworkPlayerInventory via RPCs when not server.
-            if (useAimRay && TryGetAimRay(out Vector3 origin, out Vector3 direction))
-                inventory.TryUseByItemId(itemId, origin, direction);
+            if (config.UseAimRay && TryGetAimRay(out Vector3 origin, out Vector3 direction))
+                inventory.TryUseByItemId(config.ItemId, origin, direction);
             else
-                inventory.TryUseByItemId(itemId);
+                inventory.TryUseByItemId(config.ItemId);
         }
 
         private bool TryGetAimRay(out Vector3 origin, out Vector3 direction)
@@ -419,7 +416,9 @@ namespace RoachRace.Networking.Input
             _lastUsesLeft = int.MinValue;
             _lastHoldProgress01 = -1f;
 
-            if (!IsOwner || inputActionReference == null)
+            ActionPromptModel promptModel = promptModelOverride != null ? promptModelOverride : config != null ? config.PromptModel : null;
+
+            if (!IsOwner || config == null || config.InputActionReference == null)
             {
                 promptModel?.Clear();
                 return;
@@ -428,7 +427,7 @@ namespace RoachRace.Networking.Input
             if (promptModel != null)
             {
                 promptModel.SetVisible(true);
-                promptModel.SetKey(promptKeyIcon, promptKeyText);
+                promptModel.SetKey(config.PromptKeyIcon, config.PromptKeyText);
                 promptModel.SetHoldProgress(0f);
             }
         }
@@ -440,6 +439,7 @@ namespace RoachRace.Networking.Input
                 UnbindInputAction();
 
             ResetHoldState();
+            ActionPromptModel promptModel = promptModelOverride != null ? promptModelOverride : config != null ? config.PromptModel : null;
             promptModel?.Clear();
         }
     }
