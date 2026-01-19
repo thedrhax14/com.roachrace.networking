@@ -34,10 +34,6 @@ namespace RoachRace.Networking.Input
         [Tooltip("Optional override for aim ray source. If null, uses Camera.main when available, otherwise this transform.")]
         [SerializeField] private Transform aimTransform;
 
-        [Header("Action Prompt (UI)")]
-        [Tooltip("Optional override for the prompt model. If null, uses the one from the Config.")]
-        [SerializeField] private ActionPromptModel promptModelOverride;
-
         [Header("Dependencies")]
         [Tooltip("Optional. If not assigned, will auto-resolve on Awake.")]
         [SerializeField] private NetworkPlayerInventory inventory;
@@ -274,7 +270,7 @@ namespace RoachRace.Networking.Input
             if (config == null)
                 return;
 
-            ActionPromptModel promptModel = promptModelOverride != null ? promptModelOverride : config.PromptModel;
+            ActionPromptModel promptModel = config.PromptModel;
             if (promptModel == null)
                 return;
 
@@ -416,7 +412,7 @@ namespace RoachRace.Networking.Input
             _lastUsesLeft = int.MinValue;
             _lastHoldProgress01 = -1f;
 
-            ActionPromptModel promptModel = promptModelOverride != null ? promptModelOverride : config != null ? config.PromptModel : null;
+            ActionPromptModel promptModel = config.PromptModel;
 
             if (!IsOwner || config == null || config.InputActionReference == null)
             {
@@ -439,7 +435,7 @@ namespace RoachRace.Networking.Input
                 UnbindInputAction();
 
             ResetHoldState();
-            ActionPromptModel promptModel = promptModelOverride != null ? promptModelOverride : config != null ? config.PromptModel : null;
+            ActionPromptModel promptModel = config.PromptModel;
             promptModel?.Clear();
         }
     }
