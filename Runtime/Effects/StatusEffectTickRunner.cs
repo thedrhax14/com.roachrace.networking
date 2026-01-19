@@ -131,8 +131,14 @@ namespace RoachRace.Networking.Effects
         /// </summary>
         public int AddEffect(StatusEffectDefinition definition, int stacks = 1)
         {
-            if (!IsServerInitialized) return -1;
-            if (definition == null) return -1;
+            if (definition == null) {
+                Debug.LogError($"[{nameof(StatusEffectTickRunner)}] Cannot add effect because definition is null.", gameObject);
+                return -1;
+            }
+            if (!IsServerInitialized) {
+                Debug.LogError($"[{nameof(StatusEffectTickRunner)}] Cannot add effect '{definition.name}' because server is not initialized.", gameObject);
+                return -1;
+            }
 
             stacks = Mathf.Max(1, stacks);
             Debug.Log($"[{nameof(StatusEffectTickRunner)}] Adding effect '{definition.name}' x{stacks} to '{gameObject.name}'.", gameObject);

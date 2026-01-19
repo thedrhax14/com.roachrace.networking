@@ -77,25 +77,10 @@ namespace RoachRace.Networking.Input
 
         private void Awake()
         {
-            if (config == null)
-            {
-                Debug.LogError($"[{nameof(NetworkItemUseInputListener)}] Config is not assigned on '{gameObject.name}'.", gameObject);
-                throw new System.NullReferenceException($"[{nameof(NetworkItemUseInputListener)}] Config is null on GameObject '{gameObject.name}'.");
-            }
-
-            if (config.InputActionReference == null)
-            {
-                Debug.LogError($"[{nameof(NetworkItemUseInputListener)}] Config.InputActionReference is not assigned on '{gameObject.name}'.", gameObject);
-                throw new System.NullReferenceException($"[{nameof(NetworkItemUseInputListener)}] Config.InputActionReference is null on GameObject '{gameObject.name}'.");
-            }
-
-            if (inventory == null)
-                inventory = GetComponentInParent<NetworkPlayerInventory>();
-            if (inventory == null)
-            {
-                Debug.LogError($"[{nameof(NetworkItemUseInputListener)}] NetworkPlayerInventory is not assigned and was not found on '{gameObject.name}'.", gameObject);
-                throw new System.NullReferenceException($"[{nameof(NetworkItemUseInputListener)}] NetworkPlayerInventory is null on GameObject '{gameObject.name}'.");
-            }
+            if (config == null) Debug.LogError($"[{nameof(NetworkItemUseInputListener)}] Config is not assigned on '{gameObject.name}'.", gameObject);
+            else if (config.InputActionReference == null) Debug.LogError($"[{nameof(NetworkItemUseInputListener)}] Config.InputActionReference is not assigned on '{gameObject.name}'.", gameObject);
+            if (inventory == null) inventory = GetComponentInParent<NetworkPlayerInventory>();
+            if (inventory == null) Debug.LogError($"[{nameof(NetworkItemUseInputListener)}] NetworkPlayerInventory is not assigned and was not found on '{gameObject.name}'.", gameObject);
         }
 
         public override void OnStartClient()
@@ -118,7 +103,7 @@ namespace RoachRace.Networking.Input
 
         private void RefreshBinding()
         {
-            if (!IsClientInitialized)
+            if (!IsClientInitialized || config == null)
                 return;
 
             if (IsOwner)
@@ -369,12 +354,14 @@ namespace RoachRace.Networking.Input
 
         private void TriggerInternal()
         {
-            if (config == null)
+            if (config == null) {
+                Debug.LogError($"[{nameof(NetworkItemUseInputListener)}] Config is not assigned on '{gameObject.name}'. Cannot trigger item use.", gameObject);
                 return;
+            }
 
             if (config.ItemId == 0)
             {
-                Debug.LogWarning($"[{nameof(NetworkItemUseInputListener)}] itemId is 0 (reserved). Assign an ItemDefinition or a non-zero id.", gameObject);
+                Debug.LogError($"[{nameof(NetworkItemUseInputListener)}] itemId is 0 (reserved). Assign an ItemDefinition or a non-zero id.", gameObject);
                 return;
             }
 
@@ -435,6 +422,10 @@ namespace RoachRace.Networking.Input
                 UnbindInputAction();
 
             ResetHoldState();
+            if(config == null) {
+                Debug.LogWarning($"[{nameof(NetworkItemUseInputListener)}] Config is not assigned on '{gameObject.name}'. No prompt model can be cleared.", gameObject);
+                return;
+            }
             ActionPromptModel promptModel = config.PromptModel;
             promptModel?.Clear();
         }

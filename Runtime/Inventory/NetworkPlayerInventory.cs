@@ -87,7 +87,11 @@ namespace RoachRace.Networking.Inventory
         private void ReportUseFailed(ushort itemId, int slotIndex, ItemUseFailReason reason)
         {
             // Optional dependency: if not present, failure feedback is simply not shown.
-            if (itemUseFeedback == null) return;
+            if (itemUseFeedback == null) {
+                Debug.LogError($"[{nameof(NetworkPlayerInventory)}] Cannot report item use failure because itemUseFeedback is not assigned on '{gameObject.name}'.", gameObject);
+                Debug.LogError($"[{nameof(NetworkPlayerInventory)}] Failed to use itemId {itemId} in slot {slotIndex} for reason '{reason}'.", gameObject);
+                return;
+            }
             itemUseFeedback.ReportUseFailed(itemId, slotIndex, reason);
         }
 
