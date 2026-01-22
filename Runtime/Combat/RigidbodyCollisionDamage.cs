@@ -23,7 +23,7 @@ namespace RoachRace.Networking.Combat
     /// Note: For crush damage (sustained pressure), use PhysicsCollisionCrushDamage instead.
     /// </summary>
     [RequireComponent(typeof(Rigidbody))]
-    public class PhysicsCollisionDamage : NetworkBehaviour
+    public class RigidbodyCollisionDamage : NetworkBehaviour
     {
         [Header("Impact Damage")]
         [Tooltip("Minimum impulse required to trigger impact damage")]

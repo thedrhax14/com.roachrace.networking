@@ -4,8 +4,8 @@ using RoachRace.Networking.Combat;
 
 namespace RoachRace.Networking.Editor.Combat
 {
-    [CustomEditor(typeof(PhysicsCollisionDamage))]
-    public class PhysicsCollisionDamageEditor : UnityEditor.Editor
+    [CustomEditor(typeof(RigidbodyCollisionDamage))]
+    public class RigidbodyCollisionDamageEditor : UnityEditor.Editor
     {
         private float previewImpulse = 10f;
         private Rigidbody otherRigidbody;
@@ -27,7 +27,7 @@ namespace RoachRace.Networking.Editor.Combat
 
         private float GetSelfMass()
         {
-            var component = (PhysicsCollisionDamage)target;
+            var component = (RigidbodyCollisionDamage)target;
             var rb = component.GetComponent<Rigidbody>();
             return rb != null ? rb.mass : 1f;
         }

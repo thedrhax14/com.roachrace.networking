@@ -8,7 +8,6 @@ using UnityEngine.Events;
 
 namespace RoachRace.Networking
 {
-    [RequireComponent(typeof(Rigidbody))]
     public abstract class ServerAuthMonsterController : TickNetworkBehaviour
     {
         [Header("Dependencies")]
@@ -76,8 +75,8 @@ namespace RoachRace.Networking
 
         protected Rigidbody Rigidbody => _rb;
 
-        protected abstract void OnOwnerClientTick();
-        protected abstract void OnServerTick(float delta);
+        protected virtual void OnOwnerClientTick() { }
+        protected virtual void OnServerTick(float delta) { }
 
         public void TakeControl(NetworkGhostController ghostController, NetworkConnection newOwner)
         {
