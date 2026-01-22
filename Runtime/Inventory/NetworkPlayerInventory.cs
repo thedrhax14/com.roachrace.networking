@@ -57,8 +57,10 @@ namespace RoachRace.Networking.Inventory
         [Header("Dependencies")]
         [Tooltip("Item database ScriptableObject used to resolve itemIds to definitions (icons, stack size, useOnSelect).")]
         [SerializeField] private ItemDatabase itemDatabase;
-        [Tooltip("Registry mapping itemId -> child item component under this player. Typically placed on the player root or an items container.")]
-        [SerializeField] private PlayerItemRegistry itemRegistry;
+        /// <summary>
+        /// "Registry mapping itemId -> child item component under this player. Typically placed on the player root or an items container."
+        /// </summary>
+        PlayerItemRegistry itemRegistry;
         [Tooltip("Optional. If assigned, local owner client will push slot/selection updates into this UI model for HUD rendering.")]
         [SerializeField] private InventoryModel inventoryModel;
 

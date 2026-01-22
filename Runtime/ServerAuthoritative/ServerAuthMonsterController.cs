@@ -11,8 +11,7 @@ namespace RoachRace.Networking
     [RequireComponent(typeof(Rigidbody))]
     public abstract class ServerAuthMonsterController : TickNetworkBehaviour
     {
-        [Header("Dependencies")]
-        [SerializeField] private Rigidbody _rb;
+        Rigidbody _rb;
         NetworkGhostController _originalGhostController;
         public UnityEvent OnPlayerControlActivated = new ();
 

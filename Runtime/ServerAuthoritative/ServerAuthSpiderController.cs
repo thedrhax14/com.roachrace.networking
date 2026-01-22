@@ -36,9 +36,7 @@ namespace RoachRace.Networking
 
         private CapsuleCollider _capsule;
 
-        [Header("Optional")]
-        [Tooltip("If assigned, movement is locked while parts are recalling.")]
-        [SerializeField] private NetworkSpiderPartsController spiderPartsController;
+        NetworkSpiderPartsController spiderPartsController;
 
         private bool _isGrounded;
         private Vector3 _surfaceNormal = Vector3.up;
@@ -54,9 +52,7 @@ namespace RoachRace.Networking
                 Debug.LogError($"[{nameof(ServerAuthSpiderController)}] CapsuleCollider is missing on '{gameObject.name}'.", gameObject);
                 throw new System.NullReferenceException($"[{nameof(ServerAuthSpiderController)}] CapsuleCollider is null on '{gameObject.name}'.");
             }
-
-            if (spiderPartsController == null)
-                spiderPartsController = GetComponent<NetworkSpiderPartsController>();
+            spiderPartsController = GetComponentInChildren<NetworkSpiderPartsController>();
         }
 
         protected override void OnOwnerClientTick()
