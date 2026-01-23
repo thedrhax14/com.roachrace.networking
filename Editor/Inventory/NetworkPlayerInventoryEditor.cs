@@ -55,7 +55,6 @@ namespace RoachRace.Networking.Editor.Inventory
             var itemDatabaseProp = serializedObject.FindProperty("itemDatabase");
             var inventoryModelProp = serializedObject.FindProperty("inventoryModel");
             var itemRegistryProp = serializedObject.FindProperty("itemRegistry");
-            var itemUseFeedbackProp = serializedObject.FindProperty("itemUseFeedback");
 
             EditorGUILayout.PropertyField(overrideGlobalsProp, new GUIContent("Override Global References"));
 
@@ -81,8 +80,6 @@ namespace RoachRace.Networking.Editor.Inventory
             {
                 EditorGUILayout.PropertyField(itemRegistryProp);
             }
-
-            EditorGUILayout.PropertyField(itemUseFeedbackProp);
 
             serializedObject.ApplyModifiedProperties();
         }

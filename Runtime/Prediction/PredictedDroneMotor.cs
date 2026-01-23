@@ -98,7 +98,7 @@ namespace RoachRace.Networking
             var host = RoachRaceInputActionsHost.Instance;
             Vector2 input = host != null ? host.Player.Move.ReadValue<Vector2>() : Vector2.zero;
             Vector3 move = new (-input.x, upwardInput, -input.y);
-            if(upwardInput > 0) upwardInput -= Time.fixedDeltaTime * 2; // decay over 2 seconds. Simulate gentle lift off at start
+            if(upwardInput > 0) upwardInput -= Time.fixedDeltaTime * 4; // decay over 2 seconds. Simulate gentle lift off at start
             else upwardInput = 0f;
             float cameraYaw = (Camera.main != null) ? Camera.main.transform.eulerAngles.y : transform.eulerAngles.y;
 

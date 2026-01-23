@@ -43,7 +43,6 @@ namespace RoachRace.Networking.Inventory
         [Tooltip("Optional. Items granted by the server when this player spawns. Use this for reusable default loadouts. Note: item child objects are hidden unless their itemId exists in inventory slots and that slot is selected.")]
         [SerializeField] private InventoryLoadout initialLoadout;
 
-        [Header("Dependencies")]
         [Tooltip("If false (recommended), ItemDatabase and InventoryModel will be auto-assigned from InventoryGlobals. Enable only when you need per-prefab overrides.")]
         [SerializeField, HideInInspector] private bool overrideGlobalInventoryReferences;
 
