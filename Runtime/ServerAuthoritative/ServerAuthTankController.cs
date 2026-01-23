@@ -52,6 +52,7 @@ namespace RoachRace.Networking
 
             var host = RoachRaceInputActionsHost.Instance;
             Vector2 input = host != null ? host.Player.Move.ReadValue<Vector2>() : Vector2.zero;
+            Wheels.SetActive(!IsServerInitialized);
             SubmitInputServerRpc(input);
         }
 
@@ -75,11 +76,7 @@ namespace RoachRace.Networking
         protected override void OnServerTick(float delta)
         {
             if (!IsServerInitialized) return;
-
             HandleMovement(_latestInput, delta);
-
-            if (Wheels != null && Wheels.activeSelf != IsServerInitialized)
-                Wheels.SetActive(IsServerInitialized);
         }
 
         private void HandleMovement(Vector2 input, float delta)
