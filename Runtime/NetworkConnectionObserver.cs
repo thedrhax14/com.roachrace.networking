@@ -239,6 +239,7 @@ namespace RoachRace.Networking
         /// </summary>
         public void ConnectToServer()
         {
+            LoadingManager.Instance.StartLoading("Connecting to server...");
             if (tugboat == null)
             {
                 Debug.LogError("[NetworkConnectionObserver] Tugboat reference is null. Cannot connect.");
@@ -246,7 +247,7 @@ namespace RoachRace.Networking
             }
 
             // Stop any existing client connection before starting new one
-            if (tugboat.GetConnectionState(false) != FishNet.Transporting.LocalConnectionState.Stopped)
+            if (tugboat.GetConnectionState(false) != LocalConnectionState.Stopped)
             {
                 Debug.Log("[NetworkConnectionObserver] Stopping existing client connection...");
                 tugboat.StopConnection(false);
@@ -263,6 +264,7 @@ namespace RoachRace.Networking
             {
                 Debug.LogError("[NetworkConnectionObserver] Failed to start client connection");
             }
+            LoadingManager.Instance.EndLoading();
         }
 
         /// <summary>
