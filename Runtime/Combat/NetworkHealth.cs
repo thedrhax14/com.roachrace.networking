@@ -23,8 +23,7 @@ namespace RoachRace.Networking.Combat
         private readonly SyncVar<int> _maxHealth = new(100);
         private readonly SyncVar<int> _currentHealth = new(100);
         [Header("Death/Despawn Settings")]
-        [Tooltip("Required NetworkObject to despawn on hp 0 which is typically root object. If not assigned will try to get from parent.")]
-        public NetworkObject objectToDespawn;
+        NetworkObject objectToDespawn;
         [Tooltip("Optional NetworkObject to spawn on death (e.g., explosion effect).")]
         public NetworkObject objectToSpawn;
         [Header("Events")]

@@ -34,9 +34,7 @@ namespace RoachRace.Networking.Input
         [Tooltip("Optional override for aim ray source. If null, uses Camera.main when available, otherwise this transform.")]
         [SerializeField] private Transform aimTransform;
 
-        [Header("Dependencies")]
-        [Tooltip("Optional. If not assigned, will auto-resolve on Awake.")]
-        [SerializeField] private NetworkPlayerInventory inventory;
+        NetworkPlayerInventory inventory;
 
         private bool _isHeld;
         private bool _hasTriggeredThisHold;

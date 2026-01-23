@@ -6,7 +6,9 @@
         "FishNet.Runtime",
         "RoachRace.Data",
         "RoachRace.Controls",
-        "Unity.InputSystem"
+        "Unity.InputSystem",
+        "RoachRace.Interaction",
+        "RoachRace.UI"
     ],
     "includePlatforms": [
         "Editor"

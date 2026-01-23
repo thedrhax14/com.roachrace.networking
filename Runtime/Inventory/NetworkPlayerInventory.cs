@@ -7,6 +7,10 @@ using RoachRace.Interaction;
 using RoachRace.UI.Models;
 using UnityEngine;
 
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
+
 using InventorySlotState = RoachRace.Data.InventorySlotState;
 
 namespace RoachRace.Networking.Inventory
@@ -20,7 +24,7 @@ namespace RoachRace.Networking.Inventory
     /// - Ensure a PlayerItemRegistry exists on the player hierarchy (items are local child GameObjects).<br/>
     /// - Each child item should have an ItemInstance + RoachRaceItemComponent (e.g. HealItem/KeycardItem/CasPropItemAdapter).<br/>
     /// - Assign an ItemDatabase (ScriptableObject) so UI can resolve itemId -> icon/flags.<br/>
-    /// - (Optional) Assign an InventoryModel (ScriptableObject) for local HUD rendering.<br/>
+    /// - Assign an InventoryModel (ScriptableObject) for local HUD rendering (required).<br/>
     /// <br/>
     /// Runtime behavior:<br/>
     /// - Server owns slot contents and selection.<br/>
@@ -29,39 +33,26 @@ namespace RoachRace.Networking.Inventory
     /// </summary>
     public sealed class NetworkPlayerInventory : NetworkBehaviour, IPlayerInventory
     {
-        [System.Serializable]
-        private struct InitialItemEntry
-        {
-            [Tooltip("Optional. Assign an ItemDefinition asset to avoid manually typing ids. When set, itemId will be kept in sync in the editor.")]
-            public ItemDefinition itemDefinition;
-
-            [Tooltip("ItemDefinition id to grant. 0 is reserved for empty.")]
-            public ushort itemId;
-
-            [Tooltip("How many to grant. For non-stackable items this will effectively grant 1 per empty slot.")]
-            public byte amount;
-        }
-
         [Header("Config")]
         [Tooltip("Number of inventory slots supported for this character. Survivors typically use 8, ghosts 6, monsters can use 8 (4 left + 4 right UI).")]
         [SerializeField, Range(1, 9)] private int slotCount = 9;
         [Tooltip("If true, the server will auto-select a newly picked up item when the current selected slot is empty.")]
         [SerializeField] private bool autoSelectOnPickup = true;
-        [Tooltip("Team affiliation for this inventory (affects auto-use behavior). TODO: this should be configurable per item? or better yet check type of controller that exists on the gameObject and decide based on that?")]
-        [SerializeField] private Team team = Team.Survivor;
 
         [Header("Initial Items")]
-        [Tooltip("Optional. Items granted by the server when this player spawns. This is useful for default loadouts. Note: item child objects are hidden unless their itemId exists in inventory slots and that slot is selected.")]
-        [SerializeField] private InitialItemEntry[] initialItems;
+        [Tooltip("Optional. Items granted by the server when this player spawns. Use this for reusable default loadouts. Note: item child objects are hidden unless their itemId exists in inventory slots and that slot is selected.")]
+        [SerializeField] private InventoryLoadout initialLoadout;
 
         [Header("Dependencies")]
+        [Tooltip("If false (recommended), ItemDatabase and InventoryModel will be auto-assigned from InventoryGlobals. Enable only when you need per-prefab overrides.")]
+        [SerializeField, HideInInspector] private bool overrideGlobalInventoryReferences;
+
         [Tooltip("Item database ScriptableObject used to resolve itemIds to definitions (icons, stack size, useOnSelect).")]
         [SerializeField] private ItemDatabase itemDatabase;
         [Tooltip("Registry mapping itemId -> child item component under this player. Typically placed on the player root or an items container.")]
         [SerializeField] private PlayerItemRegistry itemRegistry;
-        [Tooltip("Optional. If assigned, local owner client will push slot/selection updates into this UI model for HUD rendering.")]
+        [Tooltip("Required. The local owner client will push slot/selection updates into this UI model for HUD rendering.")]
         [SerializeField] private InventoryModel inventoryModel;
-
         [Tooltip("Optional. If assigned, server will notify owning client about item use failures (reason + slot index) so UI can show feedback.")]
         [SerializeField] private NetworkItemUseFeedbackController itemUseFeedback;
 
@@ -107,9 +98,49 @@ namespace RoachRace.Networking.Inventory
         /// </summary>
         private void Awake()
         {
-            if (itemRegistry == null && !TryGetComponent(out itemRegistry))
+            // PlayerItemRegistry is expected to live on the same GameObject as this component.
+            if (itemRegistry == null)
+                TryGetComponent(out itemRegistry);
+
+            // Auto-wire shared assets from InventoryGlobals when possible.
+            if (InventoryGlobals.TryGet(out var globals) && globals != null)
             {
-                itemRegistry = GetComponentInChildren<PlayerItemRegistry>(true);
+                if (!overrideGlobalInventoryReferences)
+                {
+                    if (globals.itemDatabase != null)
+                        itemDatabase = globals.itemDatabase;
+                    if (globals.inventoryModel != null)
+                        inventoryModel = globals.inventoryModel;
+                }
+                else
+                {
+                    // Even when overriding, attempt to heal missing references from globals.
+                    if (itemDatabase == null)
+                        itemDatabase = globals.itemDatabase;
+                    if (inventoryModel == null)
+                        inventoryModel = globals.inventoryModel;
+                }
+            }
+
+            if (itemRegistry == null)
+            {
+                Debug.LogError($"[{nameof(NetworkPlayerInventory)}] PlayerItemRegistry is not assigned and was not found on '{gameObject.name}'. This component requires a PlayerItemRegistry on the same GameObject.", gameObject);
+                throw new System.NullReferenceException(
+                    $"[{nameof(NetworkPlayerInventory)}] itemRegistry is null on GameObject '{gameObject.name}'. Add PlayerItemRegistry to the same GameObject.");
+            }
+
+            if (itemDatabase == null)
+            {
+                Debug.LogError($"[{nameof(NetworkPlayerInventory)}] ItemDatabase is not assigned on '{gameObject.name}'. Assign it or configure a Resources-based {nameof(InventoryGlobals)} asset.", gameObject);
+                throw new System.NullReferenceException(
+                    $"[{nameof(NetworkPlayerInventory)}] itemDatabase is null on GameObject '{gameObject.name}'. Assign an ItemDatabase or set up InventoryGlobals in Resources.");
+            }
+
+            if (inventoryModel == null)
+            {
+                Debug.LogError($"[{nameof(NetworkPlayerInventory)}] InventoryModel is not assigned on '{gameObject.name}'. This component requires an InventoryModel for HUD rendering.", gameObject);
+                throw new System.NullReferenceException(
+                    $"[{nameof(NetworkPlayerInventory)}] inventoryModel is null on GameObject '{gameObject.name}'. Assign an InventoryModel in the Inspector.");
             }
 
             // Optional: feedback controller can be on this GameObject or a child.
@@ -122,8 +153,7 @@ namespace RoachRace.Networking.Inventory
     /// Unity editor validation hook.<br/>
     /// <br/>
     /// Typical behavior:<br/>
-    /// - Keeps <see cref="initialItems"/> entries consistent when an <see cref="ItemDefinition"/> asset is assigned.<br/>
-    /// - Mirrors <c>itemDefinition.id</c> into <c>itemId</c> and ensures <c>amount</c> is at least 1.<br/>
+    /// - InventoryLoadout assets validate themselves (id syncing + minimum amounts).<br/>
     /// <br/>
     /// Expected context:<br/>
     /// - Editor-only; called when values change in the Inspector.<br/>
@@ -131,19 +161,47 @@ namespace RoachRace.Networking.Inventory
         protected override void OnValidate()
         {
             base.OnValidate();
-            if (initialItems == null) return;
 
-            // Keep ids in sync when ItemDefinition assets are assigned.
-            for (int i = 0; i < initialItems.Length; i++)
+            // Auto-wire references to reduce per-prefab setup and prevent lost references.
+            if (itemRegistry == null)
+                TryGetComponent(out itemRegistry);
+
+            // Prefer InventoryGlobals when present.
+            if (InventoryGlobals.TryGet(out var globals) && globals != null)
             {
-                var entry = initialItems[i];
-                if (entry.itemDefinition == null) continue;
-                if (entry.itemDefinition.id == 0) continue;
-
-                entry.itemId = entry.itemDefinition.id;
-                if (entry.amount == 0) entry.amount = 1;
-                initialItems[i] = entry;
+                if (!overrideGlobalInventoryReferences)
+                {
+                    if (globals.itemDatabase != null)
+                        itemDatabase = globals.itemDatabase;
+                    if (globals.inventoryModel != null)
+                        inventoryModel = globals.inventoryModel;
+                }
+                else
+                {
+                    // Even when overriding, attempt to heal missing references from globals.
+                    if (itemDatabase == null)
+                        itemDatabase = globals.itemDatabase;
+                    if (inventoryModel == null)
+                        inventoryModel = globals.inventoryModel;
+                }
             }
+
+            // Editor fallback: if there is exactly one asset of the type in the project, pick it.
+            // This helps repair references when prefabs lose serialized fields.
+            if (itemDatabase == null)
+                itemDatabase = TryFindSingleAsset<ItemDatabase>();
+            if (inventoryModel == null)
+                inventoryModel = TryFindSingleAsset<InventoryModel>();
+        }
+
+        private static T TryFindSingleAsset<T>() where T : Object
+        {
+            // Note: this is Editor-only and intentionally not used at runtime.
+            string[] guids = AssetDatabase.FindAssets($"t:{typeof(T).Name}");
+            if (guids == null || guids.Length != 1) return null;
+
+            string path = AssetDatabase.GUIDToAssetPath(guids[0]);
+            return AssetDatabase.LoadAssetAtPath<T>(path);
         }
 #endif
 
@@ -153,7 +211,7 @@ namespace RoachRace.Networking.Inventory
         /// Typical behavior:<br/>
         /// - Initializes server-authoritative slot list to <see cref="slotCount"/> empty entries.<br/>
         /// - Resets selection to slot 0.<br/>
-        /// - Grants configured <see cref="initialItems"/>.<br/>
+        /// - Grants configured <see cref="initialLoadout"/>.<br/>
         /// <br/>
         /// Expected context:<br/>
         /// - Server only.<br/>
@@ -172,7 +230,7 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
-        /// Server-only helper to grant starting items defined in <see cref="initialItems"/>.<br/>
+        /// Server-only helper to grant starting items defined in <see cref="initialLoadout"/>.<br/>
         /// <br/>
         /// Typical behavior:<br/>
         /// - Attempts to add each configured item to slots (stacking where possible).<br/>
@@ -184,11 +242,12 @@ namespace RoachRace.Networking.Inventory
         [Server]
         private void ApplyInitialItemsServer()
         {
-            if (initialItems == null || initialItems.Length == 0) return;
+            if (initialLoadout == null || initialLoadout.Entries == null || initialLoadout.Entries.Length == 0) return;
 
-            for (int i = 0; i < initialItems.Length; i++)
+            var entries = initialLoadout.Entries;
+            for (int i = 0; i < entries.Length; i++)
             {
-                var entry = initialItems[i];
+                var entry = entries[i];
                 ushort id = entry.itemDefinition != null ? entry.itemDefinition.id : entry.itemId;
                 if (id == 0) continue;
 
@@ -239,7 +298,7 @@ namespace RoachRace.Networking.Inventory
         {
             base.OnOwnershipClient(prevOwner);
             // Only the local owner should drive the local UI model.
-            if (IsOwner && inventoryModel != null)
+            if (IsOwner)
             {
                 Slots.OnChange += OnSlotsChanged;
                 _uiModelDirty = true;
@@ -259,7 +318,6 @@ namespace RoachRace.Networking.Inventory
         {
             // SyncList initial state replication can fire OnChange once per element. Coalesce into one UI push per frame.
             if (!IsOwner) return;
-            if (inventoryModel == null) return;
             if (!_uiModelDirty) return;
 
             _uiModelDirty = false;
@@ -297,7 +355,7 @@ namespace RoachRace.Networking.Inventory
         {
             ApplySelectionVisuals(next);
 
-            if (IsOwner && inventoryModel != null)
+            if (IsOwner)
                 _uiModelDirty = true;
         }
 
@@ -313,7 +371,6 @@ namespace RoachRace.Networking.Inventory
         private void OnSlotsChanged(SyncListOperation op, int index, InventorySlotState oldItem, InventorySlotState newItem, bool asServer)
         {
             if (!IsOwner) return;
-            if (inventoryModel == null) return;
             _uiModelDirty = true;
         }
 
@@ -328,8 +385,6 @@ namespace RoachRace.Networking.Inventory
         /// </summary>
         private void PushToModel()
         {
-            if (inventoryModel == null) return;
-
             // Copy to array for UI.
             var arr = new InventorySlotState[Slots.Count];
             for (int i = 0; i < Slots.Count; i++)
@@ -865,9 +920,6 @@ namespace RoachRace.Networking.Inventory
             // Monsters have no inventory; Ghost vs Survivor behavior differs.
             var slot = Slots[slotIndex];
             if (slot.IsEmpty) return;
-
-            bool shouldAutoUse = ShouldUseOnSelect(slot.ItemId);
-            if (shouldAutoUse) ServerUseSelected(null, null);
         }
 
         /// <summary>
@@ -938,30 +990,6 @@ namespace RoachRace.Networking.Inventory
             // If the item is consumable, it can call back into inventory removal itself later.
             // For now, keycard/heal items already manage their own charges; inventory count represents possession.
             return true;
-        }
-
-        /// <summary>
-        /// Determines whether selecting an item should auto-use it.<br/>
-        ///<br/>
-        /// Typical behavior:<br/>
-        /// - Ghosts currently always auto-use on select.<br/>
-        /// - Survivors defer to the <see cref="ItemDefinition.useOnSelect"/> flag.<br/>
-        /// </summary>
-        /// <returns>
-        /// <c>true</c> selection should immediately trigger use.<br/>
-        /// <c>false</c> selection should only equip/show the item.<br/>
-        /// </returns>
-        private bool ShouldUseOnSelect(ushort itemId)
-        {
-            // Monsters do not have inventory UI; selection should use immediately (if they ever use this component).
-            // Ghost inventory UI differs; for ghost we currently treat selection as auto-use.
-            if (team == Team.Ghost) return true; // TODO: just realized, this should be configurable per item? or better yet check type of controller that exists on the gameObject and decide based on that?
-
-            // Survivors: item definition controls.
-            if (TryGetDefinition(itemId, out var def))
-                return def.useOnSelect;
-
-            return false;
         }
 
         /// <summary>
