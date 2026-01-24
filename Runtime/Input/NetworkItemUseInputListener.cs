@@ -373,10 +373,14 @@ namespace RoachRace.Networking.Input
         private bool TryGetAimRay(out Vector3 origin, out Vector3 direction)
         {
             Transform t = aimTransform;
-            if (t == null && Camera.main != null)
+            if (t == null && Camera.main != null) {
                 t = Camera.main.transform;
-            if (t == null)
+                Debug.LogWarning($"[{nameof(NetworkItemUseInputListener)}] Using Camera.main for aim ray on '{gameObject.name}'. Consider assigning an explicit aimTransform.", gameObject);
+            }
+            if (t == null) {
                 t = transform;
+                Debug.LogWarning($"[{nameof(NetworkItemUseInputListener)}] Using own transform for aim ray on '{gameObject.name}'. Consider assigning an explicit aimTransform.", gameObject);
+            }
 
             origin = t.position;
             direction = t.forward;

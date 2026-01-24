@@ -1,47 +1,43 @@
 using FishNet.Object;
 using UnityEngine;
+using RoachRace.Networking.Combat.Movement;
 
 namespace RoachRace.Networking.Combat
 {
     /// <summary>
-    /// Physics-based projectile controller that flies forward automatically.
-    /// Designed for spawned projectiles, not player-controlled movement.
-    /// It also assumes the projectile (or a child) has NetworkHealth and
-    /// NetworkHealth is configured to spawn death effects and despawn the
-    /// projectile.
-    /// 
-    /// Features:
-    /// - Automatic forward propulsion via Rigidbody velocity
-    /// - Server-authoritative physics when networked (FishNet)
+    /// Physics-based projectile controller.
+    /// Delegates movement logic to a ProjectileMovementProfile ScriptableObject.
     /// </summary>
     [RequireComponent(typeof(Rigidbody))]
     public class ProjectileController : NetworkBehaviour
     {
-        [Header("Projectile Movement")]
-        [Tooltip("Forward velocity magnitude (m/s)")]
-        [SerializeField] private float speed = 50f;
+        [Header("Movement Configuration")]
+        [Tooltip("The movement profile defining how this projectile moves (Linear, Wavy, Ballistic, etc.)")]
+        [SerializeField] private ProjectileMovementProfile movementProfile;
+        
+        [Tooltip("Multiplier for the profile's base speed.")]
+        [SerializeField] private float speedMultiplier = 1.0f;
 
-        [Tooltip("If true, sets initial velocity once (like a thrown ball) and then lets physics (gravity/drag) take over.")]
-        [SerializeField] private bool ballisticOnce = false;
+        [Tooltip("The local direction in which the projectile moves. Default is Forward (0, 0, 1).")]
+        [SerializeField] private Vector3 moveDirection = Vector3.forward;
 
-        [Tooltip("Only used when Ballistic Once is enabled. If true, the Rigidbody uses gravity.")]
-        [SerializeField] private bool ballisticUseGravity = true;
+        [Header("Debug")]
+        [SerializeField] private bool visualizeAngularVelocity = false;
 
-        [Tooltip("If enabled, continuously re-applies forward velocity each FixedUpdate")]
-        [SerializeField] private bool maintainForwardVelocity = true;
-
-        [Header("Randomization")]
-        [Tooltip("How much Perlin noise affects rocket direction (0..2). 0 = perfectly straight.")]
-        [Range(0f, 2f)]
-        [SerializeField] private float perlinNoiseAmount = 0f;
-
-        [Tooltip("How fast the Perlin noise evolves over time.")]
-        [SerializeField] private float perlinNoiseFrequency = 1.25f;
+        // Exposed for the Editor to use in simulation
+        public ProjectileMovementProfile MovementProfile => movementProfile;
+        public float SpeedMultiplier => speedMultiplier;
+        public Vector3 MoveDirection => moveDirection;
 
         private Rigidbody _rb;
-        private float _noiseSeedX;
-        private float _noiseSeedY;
-        private float _noiseTimeOffset;
+        private float _timeAlive;
+        
+        // Random seeds for noise profiles
+        private float _seedX;
+        private float _seedY;
+        private float _seedZ;
+
+        private Vector3 initialPosition = Vector3.zero;
 
         private void Awake()
         {
@@ -50,7 +46,7 @@ namespace RoachRace.Networking.Combat
             if (_rb == null)
             {
                 Debug.LogError($"[{nameof(ProjectileController)}] Rigidbody is not assigned on GameObject '{gameObject.name}'!", gameObject);
-                throw new System.NullReferenceException($"[{nameof(ProjectileController)}] Rigidbody is null. {nameof(ProjectileController)} requires a Rigidbody component.");
+                throw new System.NullReferenceException($"[{nameof(ProjectileController)}] Rigidbody is null.");
             }
         }
 
@@ -58,11 +54,12 @@ namespace RoachRace.Networking.Combat
         {
             base.OnStartServer();
 
-            // Random per-rocket seeds so multiple rockets don't wobble in sync.
-            // This runs on the server only; clients are kinematic and just observe results.
-            _noiseSeedX = Random.Range(0f, 1000f);
-            _noiseSeedY = Random.Range(0f, 1000f);
-            _noiseTimeOffset = Random.Range(0f, 1000f);
+            // Random seeds for this instance
+            _seedX = Random.Range(0f, 1000f);
+            _seedY = Random.Range(0f, 1000f);
+            _seedZ = Random.Range(0f, 1000f);
+            _timeAlive = 0f;
+            initialPosition = transform.position;
 
             InitializeRocket();
         }
@@ -71,7 +68,6 @@ namespace RoachRace.Networking.Combat
         {
             base.OnStartClient();
             
-            // Client-side visual setup (if needed)
             if (!IsServerInitialized)
             {
                 _rb.isKinematic = true; // Clients don't simulate physics
@@ -80,54 +76,24 @@ namespace RoachRace.Networking.Combat
 
         private void InitializeRocket()
         {
-            // Physics setup
             _rb.isKinematic = false;
-
-            // Ballistic mode behaves like a thrown object.
-            if (ballisticOnce)
-                _rb.useGravity = ballisticUseGravity;
             
-            // Launch forward based on spawn rotation
-            SetRbVelocity(_rb, GetNoisyForwardDirection() * speed);
+            if (movementProfile != null)
+            {
+                movementProfile.OnInitialize(_rb, transform, moveDirection, speedMultiplier);
+            }
         }
 
         private void FixedUpdate()
         {
-            if (!IsServerInitialized) return; // Server handles physics
-
-            // Ballistic mode: only set velocity once in InitializeRocket().
-            if (ballisticOnce) return;
-
-            if (!maintainForwardVelocity) return;
-            SetRbVelocity(_rb, GetNoisyForwardDirection() * speed);
-        }
-
-        private Vector3 GetNoisyForwardDirection()
-        {
-            Vector3 forward = transform.forward;
-            if (perlinNoiseAmount <= 0.0001f)
-                return forward;
-
-            float t = (Time.time + _noiseTimeOffset) * Mathf.Max(0f, perlinNoiseFrequency);
-
-            // PerlinNoise returns [0..1]; remap to [-1..1].
-            float nx = (Mathf.PerlinNoise(_noiseSeedX, t) * 2f) - 1f;
-            float ny = (Mathf.PerlinNoise(_noiseSeedY, t) * 2f) - 1f;
-
-            // Apply lateral + vertical sway. Amount is scaled by perlinNoiseAmount.
-            Vector3 noise = (transform.right * nx + transform.up * ny) * perlinNoiseAmount;
-            Vector3 dir = forward + noise;
-
-            return dir.sqrMagnitude > 0.0001f ? dir.normalized : forward;
-        }
-
-        /// <summary>
-        /// Server-only: Update rocket's forward velocity (for guided rockets, etc.)
-        /// </summary>
-        public void SetVelocity(Vector3 newVelocity)
-        {
             if (!IsServerInitialized) return;
-            SetRbVelocity(_rb, newVelocity);
+            
+            _timeAlive += Time.fixedDeltaTime;
+
+            if (movementProfile != null)
+            {
+                movementProfile.OnFixedUpdate(_rb, transform, moveDirection, speedMultiplier, _timeAlive, _seedX, _seedY, _seedZ, initialPosition);
+            }
         }
 
         /// <summary>
@@ -137,9 +103,18 @@ namespace RoachRace.Networking.Combat
         {
             if (!IsServerInitialized) return;
             
-            Vector3 direction = (targetPosition - transform.position).normalized;
-            SetRbVelocity(_rb, direction * speed);
-            transform.rotation = Quaternion.LookRotation(direction);
+            Vector3 worldDirectionToTarget = (targetPosition - transform.position).normalized;
+            
+            // Force the velocity immediately
+            float currentSpeed = (movementProfile != null) ? movementProfile.defaultSpeed * speedMultiplier : 50f;
+            SetRbVelocity(_rb, worldDirectionToTarget * currentSpeed);
+            
+            // Align rotation so that our local moveDirection points toward target
+            Vector3 localDir = (moveDirection.sqrMagnitude > 0.0001f) ? moveDirection.normalized : Vector3.forward;
+            Vector3 currentWorldDir = transform.TransformDirection(localDir);
+            
+            Quaternion rotationOffset = Quaternion.FromToRotation(currentWorldDir, worldDirectionToTarget);
+            transform.rotation = rotationOffset * transform.rotation;
         }
 
         private static void SetRbVelocity(Rigidbody rb, Vector3 velocity)
@@ -150,15 +125,29 @@ namespace RoachRace.Networking.Combat
             rb.velocity = velocity;
     #endif
         }
+        void OnDrawGizmos()
+        {
+            if (visualizeAngularVelocity && Application.isPlaying && _rb != null)
+            {
+                // Draw Angular Velocity (Yellow)
+                Gizmos.color = Color.yellow;
+                Gizmos.DrawRay(transform.position, _rb.angularVelocity);
+                
+                // Draw a small sphere at the tip to visualize magnitude better
+                if (_rb.angularVelocity.sqrMagnitude > 0.01f)
+                {
+                    Gizmos.DrawSphere(transform.position + _rb.angularVelocity, 0.1f);
+                }
+            }
+        }
+
 
 #if UNITY_EDITOR
         protected override void OnValidate()
         {
             base.OnValidate();
-            if (speed < 0f) speed = 0f;
-            if (perlinNoiseFrequency < 0f) perlinNoiseFrequency = 0f;
-            perlinNoiseAmount = Mathf.Clamp(perlinNoiseAmount, 0f, 2f);
+            if (speedMultiplier < 0f) speedMultiplier = 0f;
         }
-#endif
+    #endif
     }
 }

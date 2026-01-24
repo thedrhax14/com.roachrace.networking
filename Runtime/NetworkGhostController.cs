@@ -62,11 +62,9 @@ namespace RoachRace.Networking
                 Transform camTransform = cameraController.transform;
                 // Keep speed consistent regardless of camera pitch by using planar directions.
                 Vector3 forward = camTransform.forward;
-                forward.y = 0f;
                 forward = forward.sqrMagnitude > 0.0001f ? forward.normalized : Vector3.forward;
 
                 Vector3 right = camTransform.right;
-                right.y = 0f;
                 right = right.sqrMagnitude > 0.0001f ? right.normalized : Vector3.right;
                 
                 // Free flight: move in camera direction
@@ -78,6 +76,7 @@ namespace RoachRace.Networking
             if (moveDir.sqrMagnitude > 1f)
                 moveDir.Normalize();
 
+            Debug.DrawRay(transform.position, moveDir, Color.cyan);
             // Apply movement directly to transform (Ghost/Spectator usually ignores physics)
             transform.position += currentSpeed * Time.deltaTime * moveDir;
             cameraController.Rotate(_lookInput);

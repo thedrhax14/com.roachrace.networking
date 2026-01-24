@@ -1,5 +1,6 @@
 using FishNet.Connection;
 using FishNet.Object;
+using NUnit.Framework;
 using RoachRace.Controls;
 using UnityEngine;
 
@@ -46,13 +47,24 @@ namespace RoachRace.Networking
                 rb.mass = 1500f;
         }
 
+        public override void OnStartServer()
+        {
+            base.OnStartServer();
+            Wheels.SetActive(true);
+        }
+
+        public override void OnStartClient()
+        {
+            base.OnStartClient();
+            Wheels.SetActive(IsServerInitialized);
+        }
+
         protected override void OnOwnerClientTick()
         {
             if (!IsOwner) return;
 
             var host = RoachRaceInputActionsHost.Instance;
             Vector2 input = host != null ? host.Player.Move.ReadValue<Vector2>() : Vector2.zero;
-            Wheels.SetActive(!IsServerInitialized);
             SubmitInputServerRpc(input);
         }
 
@@ -69,7 +81,6 @@ namespace RoachRace.Networking
                 _latestInput = Vector2.zero;
                 return;
             }
-
             _latestInput = input;
         }
 

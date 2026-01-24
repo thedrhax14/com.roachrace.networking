@@ -38,9 +38,7 @@ namespace RoachRace.Networking
 
         private CapsuleCollider _capsule;
 
-        [Header("Optional")]
-        [Tooltip("If assigned, movement is locked while parts are recalling.")]
-        [SerializeField] private NetworkSpiderPartsController spiderPartsController;
+        NetworkSpiderPartsController spiderPartsController;
 
         private bool _isGrounded;
         private Vector3 _surfaceNormal = Vector3.up;
@@ -54,11 +52,10 @@ namespace RoachRace.Networking
             if (_capsule == null)
             {
                 Debug.LogError($"[{nameof(ServerAuthSpiderController)}] CapsuleCollider is missing on '{gameObject.name}'.", gameObject);
-                throw new System.NullReferenceException($"[{nameof(ServerAuthSpiderController)}] CapsuleCollider is null on '{gameObject.name}'.");
+                throw new NullReferenceException($"[{nameof(ServerAuthSpiderController)}] CapsuleCollider is null on '{gameObject.name}'.");
             }
 
-            if (spiderPartsController == null)
-                spiderPartsController = GetComponent<NetworkSpiderPartsController>();
+            spiderPartsController = GetComponentInChildren<NetworkSpiderPartsController>();
         }
 
         protected override void OnOwnerClientTick()
@@ -91,7 +88,7 @@ namespace RoachRace.Networking
             }
 
             // If parts are recalling, ignore movement inputs entirely.
-            if (spiderPartsController != null && spiderPartsController.IsRecallInProgressServer())
+            if (spiderPartsController.IsRecallInProgressServer())
             {
                 _latestInput.Input = Vector2.zero;
                 _latestInput.Jump = false;
@@ -110,7 +107,7 @@ namespace RoachRace.Networking
             if (!IsServerInitialized) return;
 
             // Lock movement while parts are returning.
-            if (spiderPartsController != null && spiderPartsController.IsRecallInProgressServer())
+            if (spiderPartsController.IsRecallInProgressServer())
             {
                 Rigidbody.linearVelocity = Vector3.zero;
                 Rigidbody.angularVelocity = Vector3.zero;
@@ -134,10 +131,10 @@ namespace RoachRace.Networking
             Vector3[] checkPoints =
             {
                 origin,
-                origin + transform.right * _capsule.radius * 0.5f,
-                origin - transform.right * _capsule.radius * 0.5f,
-                origin + transform.forward * _capsule.radius * 0.5f,
-                origin - transform.forward * _capsule.radius * 0.5f
+                origin + _capsule.radius * 0.5f * transform.right,
+                origin - _capsule.radius * 0.5f * transform.right,
+                origin + _capsule.radius * 0.5f * transform.forward,
+                origin - _capsule.radius * 0.5f * transform.forward
             };
 
             bool foundGround = false;
@@ -225,29 +222,7 @@ namespace RoachRace.Networking
             Quaternion currentRotation = rb.rotation;
             Quaternion targetRotation = Quaternion.LookRotation(desiredForward.normalized, _surfaceNormal);
 
-            // Torque-based alignment (spring + damping) avoids the snapping seen with MoveRotation.
-            // Convert the rotation error into an axis-angle and apply a corrective torque.
-            Quaternion rotationError = targetRotation * Quaternion.Inverse(currentRotation);
-            rotationError.ToAngleAxis(out float angleDeg, out Vector3 axis);
-
-            if (float.IsNaN(axis.x) || axis.sqrMagnitude < 0.000001f)
-                return;
-
-            // Ensure we take the shortest path.
-            if (angleDeg > 180f)
-                angleDeg -= 360f;
-
-            float angleRad = angleDeg * Mathf.Deg2Rad;
-
-            // surfaceAlignSpeed acts like a spring strength; damping counters angular velocity.
-            Vector3 springTorque = axis.normalized * (angleRad * surfaceAlignSpeed);
-            Vector3 dampingTorque = -rb.angularVelocity * surfaceAlignDamping;
-            Vector3 torque = springTorque + dampingTorque;
-
-            if (maxAlignTorque > 0f)
-                torque = Vector3.ClampMagnitude(torque, maxAlignTorque);
-
-            rb.AddTorque(torque, ForceMode.Acceleration);
+            rb.MoveRotation(Quaternion.Slerp(currentRotation, targetRotation, delta * surfaceAlignSpeed));
         }
 
         private void ApplyGravity()
