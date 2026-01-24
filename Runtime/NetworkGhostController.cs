@@ -1,7 +1,6 @@
 using FishNet.Connection;
 using FishNet.Object;
 using RoachRace.Controls;
-using RoachRace.Networking.Inventory;
 using UnityEngine;
 
 namespace RoachRace.Networking
@@ -18,6 +17,7 @@ namespace RoachRace.Networking
         [SerializeField] private Transform cameraTransform;
 
         private bool _isRunning;
+        public Vector2 _lookInput = Vector2.zero;
 
         public override void OnOwnershipClient(NetworkConnection prevOwner)
         {
@@ -51,7 +51,8 @@ namespace RoachRace.Networking
             }
 
             Vector2 _moveInput = host.Player.Move.ReadValue<Vector2>();
-            Vector2 _lookInput = host.Player.Look.ReadValue<Vector2>();
+            _moveInput = Vector2.ClampMagnitude(_moveInput, 1f);
+            _lookInput = host.SmoothedLook;
             float currentSpeed = _isRunning ? fastFlySpeed : flySpeed;
             
             Vector3 moveDir = Vector3.zero;
@@ -59,13 +60,23 @@ namespace RoachRace.Networking
             if (cameraController != null)
             {
                 Transform camTransform = cameraController.transform;
+                // Keep speed consistent regardless of camera pitch by using planar directions.
                 Vector3 forward = camTransform.forward;
+                forward.y = 0f;
+                forward = forward.sqrMagnitude > 0.0001f ? forward.normalized : Vector3.forward;
+
                 Vector3 right = camTransform.right;
+                right.y = 0f;
+                right = right.sqrMagnitude > 0.0001f ? right.normalized : Vector3.right;
                 
                 // Free flight: move in camera direction
                 moveDir += forward * _moveInput.y;
                 moveDir += right * _moveInput.x;
             }
+
+            // Diagonal normalization so WASD doesn't move faster.
+            if (moveDir.sqrMagnitude > 1f)
+                moveDir.Normalize();
 
             // Apply movement directly to transform (Ghost/Spectator usually ignores physics)
             transform.position += currentSpeed * Time.deltaTime * moveDir;

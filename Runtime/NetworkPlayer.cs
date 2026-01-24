@@ -29,12 +29,18 @@ namespace RoachRace.Networking
 
         private readonly SyncVar<string> imageUrl = new("");
         private Player _playerData;
+        Transform mainCamera;
+
+        void Awake()
+        {
+            mainCamera = Camera.main.transform;
+        }
 
         void Update()
         {
             if(IsClientInitialized && IsOwner)
             {
-                transform.SetPositionAndRotation(Camera.main.transform.position, Camera.main.transform.rotation);
+                transform.SetPositionAndRotation(mainCamera.position, mainCamera.rotation);
             }
         }
 

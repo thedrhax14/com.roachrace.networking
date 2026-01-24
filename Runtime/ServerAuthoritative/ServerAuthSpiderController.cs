@@ -30,6 +30,8 @@ namespace RoachRace.Networking
         [Header("Spider Mechanics")]
         [SerializeField] private float gravityStrength = 20f;
         [SerializeField] private float surfaceAlignSpeed = 8f;
+        [SerializeField] private float surfaceAlignDamping = 2.5f;
+        [SerializeField] private float maxAlignTorque = 120f;
         [SerializeField] private float groundCheckDistance = 0.3f;
         [SerializeField] private float stickyForce = 15f;
         [SerializeField] private LayerMask groundMask = -1;
@@ -219,9 +221,33 @@ namespace RoachRace.Networking
             if (desiredForward.sqrMagnitude < 0.0001f)
                 desiredForward = Vector3.ProjectOnPlane(transform.forward, _surfaceNormal);
 
+            Rigidbody rb = Rigidbody;
+            Quaternion currentRotation = rb.rotation;
             Quaternion targetRotation = Quaternion.LookRotation(desiredForward.normalized, _surfaceNormal);
-            Quaternion newRotation = Quaternion.Slerp(Rigidbody.rotation, targetRotation, surfaceAlignSpeed * delta);
-            Rigidbody.MoveRotation(newRotation);
+
+            // Torque-based alignment (spring + damping) avoids the snapping seen with MoveRotation.
+            // Convert the rotation error into an axis-angle and apply a corrective torque.
+            Quaternion rotationError = targetRotation * Quaternion.Inverse(currentRotation);
+            rotationError.ToAngleAxis(out float angleDeg, out Vector3 axis);
+
+            if (float.IsNaN(axis.x) || axis.sqrMagnitude < 0.000001f)
+                return;
+
+            // Ensure we take the shortest path.
+            if (angleDeg > 180f)
+                angleDeg -= 360f;
+
+            float angleRad = angleDeg * Mathf.Deg2Rad;
+
+            // surfaceAlignSpeed acts like a spring strength; damping counters angular velocity.
+            Vector3 springTorque = axis.normalized * (angleRad * surfaceAlignSpeed);
+            Vector3 dampingTorque = -rb.angularVelocity * surfaceAlignDamping;
+            Vector3 torque = springTorque + dampingTorque;
+
+            if (maxAlignTorque > 0f)
+                torque = Vector3.ClampMagnitude(torque, maxAlignTorque);
+
+            rb.AddTorque(torque, ForceMode.Acceleration);
         }
 
         private void ApplyGravity()
