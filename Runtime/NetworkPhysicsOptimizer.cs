@@ -10,8 +10,7 @@ namespace RoachRace.Networking
     /// <para>
     /// <b>Usage:</b><br/>
     /// 1. Add this component to a networked prefab with a Rigidbody.<br/>
-    /// 2. Add a <see cref="FishNet.Component.Observing.GridCondition"/> (or similar distance condition) to the prefab.<br/>
-    /// 3. Ensure your NetworkManager has a <see cref="FishNet.Component.Observing.HashGrid"/> component.<br/>
+    /// 2. Add a <see cref="FishNet.Component.Observing.DistanceCondition"/> (e.g. range 40-50m) to the prefab.<br/>
     /// </para>
     /// <para>
     /// <b>Behavior:</b><br/>
@@ -22,10 +21,8 @@ namespace RoachRace.Networking
     [RequireComponent(typeof(Rigidbody))]
     public class NetworkPhysicsOptimizer : NetworkBehaviour
     {
-        [Tooltip("Max number of rigidbodies to wake up per physics frame. Helps prevent lag spikes when a player enters a crowded area.")]
-        [SerializeField] private int maxWakeUpsPerFrame = 5;
         public bool IsSleeping;
-        public int observers;
+        public int observers, onObserversActiveInvokes, wakeUpQueueCount;
 
         private Rigidbody _rb;
         
@@ -56,16 +53,19 @@ namespace RoachRace.Networking
         {
             base.OnStartServer();
             NetworkObject.OnObserversActive += OnObserversActive;
-            
+            onObserversActiveInvokes++;
             // Default to kinematic/sleeping until a player is confirmed near
             // We perform an initial check in case observers are already present (e.g. late join or spawn on top)
             if (NetworkObject.Observers.Count > 0)
             {
                 EnqueueWakeUp(this);
+                wakeUpQueueCount = _wakeUpQueue.Count;
             }
             else
             {
                 _rb.isKinematic = true;
+                _rb.Sleep();
+                IsSleeping = true;
             }
         }
 
@@ -77,19 +77,17 @@ namespace RoachRace.Networking
 
         private void OnObserversActive(NetworkObject nob)
         {
-            // This event fires when observer count goes 0 -> 1 or X -> 0 (if logic in NetworkObject handles it that way, 
-            // but FishNet OnObserversActive usually fires when observers > 0 coming from 0, or vice versa if handled manually).
-            // FishNet's OnObserversActive specifically: "Called when this NetworkObject losses all observers or gains observers while previously having none."
+            // This event fires when observer count goes 0 -> 1 or X -> 0
             
             bool hasObservers = nob.Observers.Count > 0;
             observers = nob.Observers.Count;
-            
+            Debug.Log($"{nameof(NetworkPhysicsOptimizer)}: Object {nob.name} observers changed. Count: {observers}", gameObject);
             if (hasObservers)
             {
                 // Queue for wake-up (prevent lag spike)
                 EnqueueWakeUp(this);
             }
-            else
+            else if (IsSleeping == false) // if not sleeping
             {
                 // Sleep immediately (instant benefit, no cost)
                 _rb.isKinematic = true;
@@ -103,6 +101,7 @@ namespace RoachRace.Networking
 
         public void WakeUpNow()
         {
+            if(IsSleeping == false) return; // already awake
             _rb.isKinematic = false;
             _rb.WakeUp();
             IsSleeping = false;
@@ -125,29 +124,21 @@ namespace RoachRace.Networking
 
             if (_processorRoutine == null && _coroutineRunner != null)
             {
-                _processorRoutine = _coroutineRunner.StartCoroutine(ProcessQueue(item.maxWakeUpsPerFrame));
+                _processorRoutine = _coroutineRunner.StartCoroutine(ProcessQueue());
             }
         }
 
-        private static IEnumerator ProcessQueue(int limitPerFrame)
+        private static IEnumerator ProcessQueue()
         {
             var wait = new WaitForFixedUpdate();
             
             while (_wakeUpQueue.Count > 0)
             {
-                // Wake up max N objects per physics frame to hide the re-indexing cost
-                int processed = 0;
-                
-                while (_wakeUpQueue.Count > 0 && processed < limitPerFrame)
+                var item = _wakeUpQueue.Dequeue();
+                // Check if item is still valid (might have been destroyed while in queue)
+                if (item != null && item.NetworkObject != null && item.NetworkObject.IsSpawned)
                 {
-                    var item = _wakeUpQueue.Dequeue();
-                    
-                    // Check if item is still valid (might have been destroyed while in queue)
-                    if (item != null && item.NetworkObject != null && item.NetworkObject.IsSpawned)
-                    {
-                        item.WakeUpNow();
-                    }
-                    processed++;
+                    item.WakeUpNow();
                 }
                 yield return wait;
             }
