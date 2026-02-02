@@ -2,6 +2,8 @@ using System;
 using FishNet.Connection;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
+using KINEMATION.CharacterAnimationSystem.Examples.Scripts;
+using KINEMATION.CharacterAnimationSystem.Scripts.Runtime.Core;
 using UnityEngine;
 
 namespace RoachRace.Networking
@@ -24,6 +26,7 @@ namespace RoachRace.Networking
         [Header("Scene References")]
         [Tooltip("World-space root used to measure motion and to find facing direction. Usually the same VisualRoot you smooth.")]
         [SerializeField] private Transform visualRoot;
+        [SerializeField] private CharacterAnimationComponent characterAnimationComponent;
 
         [Tooltip("Animator which reads locomotion floats and receives triggers.")]
         [SerializeField] private Animator animator;
@@ -60,6 +63,7 @@ namespace RoachRace.Networking
         [SerializeField] private string useItemIdParam = "UseItemId";
 
         private readonly SyncVar<bool> _isCrouching = new(false);
+        private readonly SyncVar<int> _activeItemIndex = new(0);
 
         private int _moveXHash;
         private int _moveYHash;
@@ -72,7 +76,8 @@ namespace RoachRace.Networking
         private int _reloadTriggerHash;
         private int _useItemTriggerHash;
         private int _useItemIdHash;
-
+        
+       
         private Vector3 _lastPos;
         private bool _hasLast;
         private Vector3 _smoothedPlanarVel;
@@ -81,19 +86,32 @@ namespace RoachRace.Networking
         private float _moveY;
         private float _gait;
 
-        private void Awake()
+        // Dependecies for ProceduralAnimationSettings
+        public Transform RightHandIkTarget => GetActiveItem() == null ? null : GetActiveItem().rightHandTarget;
+        public Transform LeftHandIkTarget => GetActiveItem() == null ? null : GetActiveItem().leftHandTarget;
+        protected Vector2 _moveInput = new ();
+        public Vector2 MoveInput => _moveInput;
+        protected float _targetPitch;
+        protected Vector2 _lookInput;
+        public Vector2 LookInput => _lookInput;
+        public CasProp[] items;
+
+
+        private void Start()
         {
             if (visualRoot == null)
-                visualRoot = transform;
+            {
+                throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] VisualRoot is null on '{gameObject.name}'.");
+            }
 
             if (animator == null)
             {
-                animator = GetComponentInChildren<Animator>(true);
-                if (animator == null)
-                {
-                    Debug.LogError($"[{nameof(SurvivorRemoteAnimator)}] Animator is missing on '{gameObject.name}'.", gameObject);
-                    throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] animator is null on '{gameObject.name}'.");
-                }
+                throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] animator is null on '{gameObject.name}'.");
+            }
+
+            if(items == null || items.Length == 0)
+            {
+                throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] No CAS items found on '{gameObject.name}'. At least one should be added manually.");
             }
 
             _moveXHash = Animator.StringToHash(moveXParam);
@@ -109,6 +127,52 @@ namespace RoachRace.Networking
             _useItemIdHash = Animator.StringToHash(useItemIdParam);
 
             animator.SetBool(_isFirstPersonHash, true);
+
+            TryEquipFirstCasItem();
+        }
+
+        public void SetPitch(float pitchInput)
+        {
+            _targetPitch = pitchInput;
+        }
+
+        public void SetYaw(float yawInput)
+        {
+            _lookInput.y = yawInput;
+        }
+
+        private void TryEquipFirstCasItem()
+        {
+            items = GetComponentsInChildren<CasProp>(true);
+            if (items.Length == 0) {
+                throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] No CAS items found on '{gameObject.name}'.");
+            }
+
+            // Disable all first, then enable first item.
+            foreach (CasProp prop in items)
+            {
+                if (prop != null)
+                    prop.gameObject.SetActive(false);
+            }
+
+            CasProp first = GetActiveItem();
+            if (first == null) {
+                throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] Could not get first CAS item on '{gameObject.name}'.");
+            }
+            first.gameObject.SetActive(true);
+            first.OnEquipped();
+            first.SetVisibility(true);
+            characterAnimationComponent.UpdateAnimationSettings(first.animationSettings);
+        }
+
+        public CasProp GetActiveItem()
+        {
+            if(_activeItemIndex.Value < 0 || _activeItemIndex.Value >= items.Length)
+            {
+                Debug.LogError($"[{nameof(SurvivorRemoteAnimator)}] Active item index {_activeItemIndex.Value} is out of bounds (max {items.Length}) on '{gameObject.name}'. Defaulting to first item.", gameObject);
+                return items[0];
+            }
+            return items[_activeItemIndex.Value];
         }
 
         public override void OnStartClient()
@@ -133,6 +197,8 @@ namespace RoachRace.Networking
 
             _isCrouching.OnChange -= OnCrouchChanged;
             _hasLast = false;
+            if(visualRoot != null) visualRoot.gameObject.SetActive(false);
+            else Debug.LogWarning($"[{nameof(SurvivorRemoteAnimator)}] visualRoot is null on OnStopClient for '{gameObject}'. Leaving the game?");
         }
 
         private void LateUpdate()
@@ -206,6 +272,10 @@ namespace RoachRace.Networking
             animator.SetFloat(_moveXHash, _moveX);
             animator.SetFloat(_moveYHash, _moveY);
             animator.SetFloat(_gaitHash, _gait);
+            _moveInput.x = _moveX;
+            _moveInput.y = _moveY;
+
+            _lookInput.x = Mathf.Lerp(_lookInput.x, _targetPitch, Time.deltaTime * 10f);
         }
 
         private static float SnapToZero(float value, float threshold)
@@ -325,6 +395,12 @@ namespace RoachRace.Networking
 
             animator.SetInteger(_useItemIdHash, itemAnimId);
             animator.SetTrigger(_useItemTriggerHash);
+        }
+
+        void OnDestroy()
+        {
+            if(visualRoot != null) Destroy(visualRoot.gameObject);
+            else Debug.LogWarning($"[{nameof(SurvivorRemoteAnimator)}] visualRoot is null on OnDestroy for '{gameObject}'. Leaving the game?");
         }
     }
 }

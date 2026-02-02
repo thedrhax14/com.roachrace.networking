@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using FishNet.Component.Transforming.Beta;
 using FishNet.Managing.Timing;
 using FishNet.Object;
+using UnityEditor.EditorTools;
 using UnityEngine;
 
 namespace RoachRace.Networking
@@ -42,6 +43,8 @@ namespace RoachRace.Networking
 
         [Tooltip("Transform to render smoothly. Should be visuals only (no physics).")]
         [SerializeField] private Transform visualRoot;
+        [Tooltip("SurvivorRemoteAnimator for updating yaw.")]
+        [SerializeField] private SurvivorRemoteAnimator survivorRemoteAnimator;
 
         [Header("Buffer")]
         [SerializeField, Range(0.05f, 0.25f)] private float interpolationDelay = 0.12f;
@@ -96,6 +99,7 @@ namespace RoachRace.Networking
         private double _lastNow;
         private double _lastRenderTime;
         private float _lastT;
+        private float currentYaw;
 
         private float[] _renderTimeDeltaMs;
         private int _renderTimeDeltaIndex;
@@ -471,8 +475,9 @@ namespace RoachRace.Networking
                 Camera.main.transform.position = visualRoot.position + cameraOffset;
             }
 
+            currentYaw = visualRoot.eulerAngles.y;
+
             // Yaw only.
-            float currentYaw = visualRoot.eulerAngles.y;
             float yawError = Mathf.Abs(Mathf.DeltaAngle(currentYaw, targetYaw));
 
             float newYaw;
@@ -485,8 +490,10 @@ namespace RoachRace.Networking
             {
                 newYaw = Mathf.SmoothDampAngle(currentYaw, targetYaw, ref _correctionYawVelocity, correctionSmoothTime);
             }
-
-            visualRoot.rotation = Quaternion.Euler(0f, newYaw, 0f);
+            currentYaw = newYaw;
+            survivorRemoteAnimator.SetYaw(currentYaw);
+            visualRoot.rotation = Quaternion.Euler(0f, currentYaw, 0f);
+            
         }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD

@@ -38,6 +38,9 @@ namespace RoachRace.Networking
         }
         #endregion
 
+        [Header("References")]
+        [SerializeField] private SurvivorRemoteAnimator survivorRemoteAnimator;
+
         [Header("Input")]
         [SerializeField] private InputActionReference moveAction;
 
@@ -60,14 +63,17 @@ namespace RoachRace.Networking
         {
             if (rb == null && !TryGetComponent(out rb))
             {
-                Debug.LogError($"[{nameof(PredictedHumanMotor)}] Rigidbody is not assigned and was not found on GameObject '{gameObject.name}'.", gameObject);
                 throw new System.NullReferenceException($"[{nameof(PredictedHumanMotor)}] Rigidbody is null on GameObject '{gameObject.name}'.");
             }
 
             if (moveAction == null || moveAction.action == null)
             {
-                Debug.LogError($"[{nameof(PredictedHumanMotor)}] Move InputActionReference is not assigned on '{gameObject.name}'.", gameObject);
                 throw new System.NullReferenceException($"[{nameof(PredictedHumanMotor)}] moveAction is null on '{gameObject.name}'.");
+            }
+
+            if(!TryGetComponent(out survivorRemoteAnimator))
+            {
+                throw new System.NullReferenceException($"[{nameof(PredictedHumanMotor)}] SurvivorRemoteAnimator is null on '{gameObject.name}'.");
             }
 
             _root.Initialize(rb);
@@ -99,6 +105,10 @@ namespace RoachRace.Networking
         protected override void TimeManager_OnTick()
         {
             PerformReplicate(BuildMoveData());
+            if(IsOwner)
+            {
+                survivorRemoteAnimator.SetPitch(view.Pitch);
+            }
             CreateReconcile();
         }
 
@@ -114,11 +124,10 @@ namespace RoachRace.Networking
                 return default;
 
             Vector2 move = moveAction.action.ReadValue<Vector2>();
-            float targetYaw = view.Yaw;
 
             _bodyYaw = Mathf.MoveTowardsAngle(
                 _bodyYaw,
-                targetYaw,
+                view.Yaw,
                 turnSpeed * _dt
             );
 
