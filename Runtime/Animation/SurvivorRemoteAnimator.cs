@@ -34,9 +34,6 @@ namespace RoachRace.Networking
         [SerializeField] private string gaitParam = "Gait";
         [SerializeField] private string isMovingParam = "IsMoving";
 
-        [Tooltip("Max planar speed used to normalize MoveX/MoveY (-1..1).")]
-        [SerializeField, Min(0.1f)] private float maxSpeedForNormalization = 6.5f;
-
         [Tooltip("Below this planar speed, treat as idle.")]
         [SerializeField, Min(0f)] private float idleSpeedThreshold = 0.08f;
 
@@ -51,6 +48,7 @@ namespace RoachRace.Networking
 
         [Header("State Params")]
         [SerializeField] private string crouchBoolParam = "Crouch";
+        [SerializeField] private string isFirstPersonParam = "IsFirstPerson";
 
         [Header("Event Params")]
         [SerializeField] private string fireTriggerParam = "Fire";
@@ -65,6 +63,7 @@ namespace RoachRace.Networking
         private int _gaitHash;
         private int _isMovingHash;
         private int _crouchHash;
+        private int _isFirstPersonHash;
 
         private int _fireTriggerHash;
         private int _reloadTriggerHash;
@@ -99,11 +98,14 @@ namespace RoachRace.Networking
             _gaitHash = Animator.StringToHash(gaitParam);
             _isMovingHash = Animator.StringToHash(isMovingParam);
             _crouchHash = Animator.StringToHash(crouchBoolParam);
+            _isFirstPersonHash = Animator.StringToHash(isFirstPersonParam);
 
             _fireTriggerHash = Animator.StringToHash(fireTriggerParam);
             _reloadTriggerHash = Animator.StringToHash(reloadTriggerParam);
             _useItemTriggerHash = Animator.StringToHash(useItemTriggerParam);
             _useItemIdHash = Animator.StringToHash(useItemIdParam);
+
+            animator.SetBool(_isFirstPersonHash, true);
         }
 
         public override void OnStartClient()
@@ -164,9 +166,21 @@ namespace RoachRace.Networking
             forward = forward.sqrMagnitude > 0.0001f ? forward.normalized : Vector3.forward;
             Vector3 right = Vector3.Cross(Vector3.up, forward);
 
-            float invMax = 1f / Mathf.Max(0.1f, maxSpeedForNormalization);
-            float targetMoveX = Mathf.Clamp(Vector3.Dot(_smoothedPlanarVel, right) * invMax, -1f, 1f);
-            float targetMoveY = Mathf.Clamp(Vector3.Dot(_smoothedPlanarVel, forward) * invMax, -1f, 1f);
+            Vector3 planarDir = isMoving && _smoothedPlanarVel.sqrMagnitude > 0.0001f
+                ? _smoothedPlanarVel.normalized
+                : Vector3.zero;
+
+            float targetMoveX = Mathf.Clamp(Vector3.Dot(planarDir, right), -1f, 1f);
+            float targetMoveY = Mathf.Clamp(Vector3.Dot(planarDir, forward), -1f, 1f);
+
+            // CAS-style input axes: diagonals should also reach +/-1 on both axes.
+            float maxAbs = Mathf.Max(Mathf.Abs(targetMoveX), Mathf.Abs(targetMoveY));
+            if (maxAbs > 0.0001f)
+            {
+                float inv = 1f / maxAbs;
+                targetMoveX = Mathf.Clamp(targetMoveX * inv, -1f, 1f);
+                targetMoveY = Mathf.Clamp(targetMoveY * inv, -1f, 1f);
+            }
 
             float targetGait;
             if (!isMoving)
