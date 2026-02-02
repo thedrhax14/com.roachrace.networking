@@ -91,8 +91,8 @@ namespace RoachRace.Networking
         public Transform LeftHandIkTarget => GetActiveItem() == null ? null : GetActiveItem().leftHandTarget;
         protected Vector2 _moveInput = new ();
         public Vector2 MoveInput => _moveInput;
-        protected float _targetPitch;
-        protected Vector2 _lookInput;
+        protected readonly SyncVar<Vector2> _targetLookInput = new (Vector2.zero);
+        protected Vector2 _lookInput = Vector2.zero;
         public Vector2 LookInput => _lookInput;
         public CasProp[] items;
 
@@ -133,12 +133,24 @@ namespace RoachRace.Networking
 
         public void SetPitch(float pitchInput)
         {
-            _targetPitch = pitchInput;
+            SetPitchRPC(pitchInput);
+        }
+
+        [ServerRpc]
+        void SetPitchRPC(float pitchInput)
+        {
+            _targetLookInput.Value = new Vector2(pitchInput, _lookInput.y);
         }
 
         public void SetYaw(float yawInput)
         {
-            _lookInput.y = yawInput;
+            SetYawRPC(yawInput);
+        }
+
+        [ServerRpc]
+        void SetYawRPC(float yawInput)
+        {
+            _targetLookInput.Value = new Vector2(_lookInput.x, yawInput);
         }
 
         private void TryEquipFirstCasItem()
@@ -275,7 +287,8 @@ namespace RoachRace.Networking
             _moveInput.x = _moveX;
             _moveInput.y = _moveY;
 
-            _lookInput.x = Mathf.Lerp(_lookInput.x, _targetPitch, Time.deltaTime * 10f);
+            _lookInput.x = Mathf.Lerp(_lookInput.x, _targetLookInput.Value.x, Time.deltaTime * 10f);
+            _lookInput.y = Mathf.Lerp(_lookInput.y, _targetLookInput.Value.y, Time.deltaTime * 10f);
         }
 
         private static float SnapToZero(float value, float threshold)

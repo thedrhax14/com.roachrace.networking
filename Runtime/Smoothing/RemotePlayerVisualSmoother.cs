@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using FishNet.Component.Transforming.Beta;
+using FishNet.Connection;
 using FishNet.Managing.Timing;
 using FishNet.Object;
+using Unity.Cinemachine;
 using UnityEditor.EditorTools;
 using UnityEngine;
 
@@ -55,7 +57,7 @@ namespace RoachRace.Networking
         [SerializeField] private bool useHermite = true;
         [SerializeField, Range(0.0f, 5f)] private float maxHermiteTangentDistance = 1.25f;
         [SerializeField, Range(-1f, 1f)] private float hermiteVelocityDotFallback = 0.0f;
-        [SerializeField] private Vector3 cameraOffset = new(0f, 1.5f, 0);
+        [SerializeField] private CinemachineCamera virtualCamera;
 
         [Header("Error Handling")]
         [SerializeField, Range(0f, 0.5f)] private float ignoreErrorDistance = 0.05f;
@@ -150,6 +152,15 @@ namespace RoachRace.Networking
             CaptureSnapshot();
 
             _initialized = true;
+        }
+
+        public override void OnOwnershipClient(NetworkConnection prevOwner)
+        {
+            base.OnOwnershipClient(prevOwner);
+            if(IsOwner) {
+                virtualCamera.transform.parent = null;
+                virtualCamera.Prioritize();
+            }
         }
 
         public override void OnStopClient()
@@ -470,10 +481,6 @@ namespace RoachRace.Networking
             {
                 visualRoot.position = targetPos;
             }
-            if(IsOwner)
-            {
-                Camera.main.transform.position = visualRoot.position + cameraOffset;
-            }
 
             currentYaw = visualRoot.eulerAngles.y;
 
@@ -491,9 +498,7 @@ namespace RoachRace.Networking
                 newYaw = Mathf.SmoothDampAngle(currentYaw, targetYaw, ref _correctionYawVelocity, correctionSmoothTime);
             }
             currentYaw = newYaw;
-            survivorRemoteAnimator.SetYaw(currentYaw);
             visualRoot.rotation = Quaternion.Euler(0f, currentYaw, 0f);
-            
         }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
