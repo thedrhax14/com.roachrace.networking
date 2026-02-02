@@ -155,7 +155,7 @@ namespace RoachRace.Networking
 
         private void TryEquipFirstCasItem()
         {
-            items = GetComponentsInChildren<CasProp>(true);
+            items = visualRoot.GetComponentsInChildren<CasProp>(true);
             if (items.Length == 0) {
                 throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] No CAS items found on '{gameObject.name}'.");
             }

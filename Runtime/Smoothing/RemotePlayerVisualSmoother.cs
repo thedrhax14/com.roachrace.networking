@@ -155,7 +155,9 @@ namespace RoachRace.Networking
         public override void OnOwnershipClient(NetworkConnection prevOwner)
         {
             base.OnOwnershipClient(prevOwner);
-            if(IsOwner) {
+            virtualCamera.enabled = IsOwner;
+            if(IsOwner)
+            {
                 virtualCamera.transform.parent = null;
                 virtualCamera.Prioritize();
             }
