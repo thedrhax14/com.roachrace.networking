@@ -1,11 +1,9 @@
 using System;
 using System.Collections.Generic;
-using FishNet.Component.Transforming.Beta;
 using FishNet.Connection;
 using FishNet.Managing.Timing;
 using FishNet.Object;
 using Unity.Cinemachine;
-using UnityEditor.EditorTools;
 using UnityEngine;
 
 namespace RoachRace.Networking
