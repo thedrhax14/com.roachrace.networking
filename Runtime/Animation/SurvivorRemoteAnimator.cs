@@ -46,6 +46,9 @@ namespace RoachRace.Networking
         [Tooltip("How quickly animator floats follow targets (bigger = snappier).")]
         [SerializeField, Min(0f)] private float paramSmoothing = 10f;
 
+        [Tooltip("When smoothed animator floats get very small, snap them to 0 to prevent lingering micro-values/jitter.")]
+        [SerializeField, Min(0f)] private float paramSnapToZeroThreshold = 0.01f;
+
         [Header("State Params")]
         [SerializeField] private string crouchBoolParam = "Crouch";
         [SerializeField] private string isFirstPersonParam = "IsFirstPerson";
@@ -195,10 +198,22 @@ namespace RoachRace.Networking
             _moveY = Mathf.Lerp(_moveY, targetMoveY, alphaParam);
             _gait = Mathf.Lerp(_gait, targetGait, alphaParam);
 
+            _moveX = SnapToZero(_moveX, paramSnapToZeroThreshold);
+            _moveY = SnapToZero(_moveY, paramSnapToZeroThreshold);
+            _gait = SnapToZero(_gait, paramSnapToZeroThreshold);
+
             animator.SetBool(_isMovingHash, isMoving);
             animator.SetFloat(_moveXHash, _moveX);
             animator.SetFloat(_moveYHash, _moveY);
             animator.SetFloat(_gaitHash, _gait);
+        }
+
+        private static float SnapToZero(float value, float threshold)
+        {
+            if (threshold <= 0f)
+                return value;
+
+            return Mathf.Abs(value) < threshold ? 0f : value;
         }
 
         private void OnCrouchChanged(bool prev, bool next, bool asServer)

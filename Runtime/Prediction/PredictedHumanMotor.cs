@@ -42,8 +42,7 @@ namespace RoachRace.Networking
         [SerializeField] private InputActionReference moveAction;
 
         [Header("Tuning")]
-        [SerializeField] private float moveForce = 35f;
-        [SerializeField] private float maxSpeed = 6.5f;
+        [SerializeField] private float speed = 3f;
         [SerializeField] private float turnSpeed = 720f; // deg/sec
 
         [Header("Constraints")]
@@ -142,25 +141,10 @@ namespace RoachRace.Networking
         {
             _dt = (float)TimeManager.TickDelta;
 
-            SimulateYaw(rd);
-            SimulateMove(rd);
+            _root.MoveRotation(Quaternion.Euler(0f, rd.Yaw, 0f));
 
             _root.Simulate();
-        }
-
-        [Reconcile]
-        private void PerformReconcile(ReconcileData rd, Channel channel = Channel.Unreliable)
-        {
-            _root.Reconcile(rd.Root);
-        }
-
-        private void SimulateYaw(ReplicateData rd)
-        {
-            _root.MoveRotation(Quaternion.Euler(0f, rd.Yaw, 0f));
-        }
-
-        private void SimulateMove(ReplicateData rd)
-        {
+            
             Vector2 moveInput = Vector2.ClampMagnitude(rd.Move, 1f);
             float inputMag = Mathf.Clamp01(moveInput.magnitude);
             if (inputMag <= 0.0001f) return;
@@ -170,21 +154,15 @@ namespace RoachRace.Networking
             Vector3 moveWorld = yawRot * new Vector3(moveInput.x, 0f, moveInput.y);
 
             // ForceMode.Acceleration makes this independent of mass.
-            _root.AddForce(moveWorld * (moveForce * inputMag), ForceMode.Acceleration);
+            _root.Velocity(moveWorld * (speed * inputMag));
 
-            ClampPlanarSpeed();
+            _root.Simulate();
         }
 
-        private void ClampPlanarSpeed()
+        [Reconcile]
+        private void PerformReconcile(ReconcileData rd, Channel channel = Channel.Unreliable)
         {
-            Vector3 v = rb.linearVelocity;
-            Vector3 planar = Vector3.ProjectOnPlane(v, Vector3.up);
-            float sp = planar.magnitude;
-            if (sp > maxSpeed)
-            {
-                Vector3 clampedPlanar = planar * (maxSpeed / sp);
-                rb.linearVelocity = clampedPlanar + Vector3.up * v.y;
-            }
+            _root.Reconcile(rd.Root);
         }
     }
 }
