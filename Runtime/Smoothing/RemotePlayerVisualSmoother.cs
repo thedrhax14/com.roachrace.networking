@@ -35,34 +35,55 @@ namespace RoachRace.Networking
         }
 
         [Header("Scene References")]
-        [Tooltip("Transform that receives authoritative network updates (usually the Rigidbody root).")]
-        [SerializeField] private Transform authorityRoot;
-
-        [Tooltip("Optional: Rigidbody on the authority root, used for velocity-assisted interpolation.")]
+        [Tooltip("Rigidbody on the authority root, used for velocity-assisted interpolation.")]
         [SerializeField] private Rigidbody authorityRigidbody;
 
         [Tooltip("Transform to render smoothly. Should be visuals only (no physics).")]
         [SerializeField] private Transform visualRoot;
-        [Tooltip("SurvivorRemoteAnimator for updating yaw.")]
-        [SerializeField] private SurvivorRemoteAnimator survivorRemoteAnimator;
 
         [Header("Buffer")]
-        [SerializeField, Range(0.05f, 0.25f)] private float interpolationDelay = 0.12f;
-        [SerializeField, Range(4, 20)] private int maxSnapshots = 10;
-        [SerializeField, Range(0.02f, 0.15f)] private float maxExtrapolation = 0.08f;
+        [SerializeField, Range(0.05f, 0.35f)] private float interpolationDelay = 0.2f;
+        [SerializeField, Range(4, 20)] private int maxSnapshots = 12;
+        [SerializeField, Range(0.02f, 0.15f)] private float maxExtrapolation = 0.12f;
 
         [Header("Interpolation")]
         [SerializeField] private bool useHermite = true;
-        [SerializeField, Range(0.0f, 5f)] private float maxHermiteTangentDistance = 1.25f;
+        [SerializeField, Range(0.0f, 5f)] private float maxHermiteTangentDistance = 0.5f;
         [SerializeField, Range(-1f, 1f)] private float hermiteVelocityDotFallback = 0.0f;
         [SerializeField] private CinemachineCamera virtualCamera;
+
+        [Header("Hermite Safety")]
+        [Tooltip("If enabled, Hermite interpolation falls back to linear when the curve point leaves the segment AABB expanded by padding.")]
+        [SerializeField] private bool hermiteOvershootGuard = true;
+
+        [Tooltip("World-space padding added to the [a,b] AABB when checking Hermite overshoot.")]
+        [SerializeField, Min(0f)] private float hermiteOvershootPadding = 0.25f;
 
         [Header("Error Handling")]
         [SerializeField, Range(0f, 0.5f)] private float ignoreErrorDistance = 0.05f;
         [SerializeField, Range(0.05f, 1f)] private float smoothErrorDistance = 0.3f;
-        [SerializeField, Range(0.1f, 2f)] private float snapErrorDistance = 0.6f;
-        [SerializeField, Range(0.2f, 5f)] private float teleportErrorDistance = 1.0f;
+        [SerializeField, Range(0.1f, 2f)] private float snapErrorDistance = 1.5f;
+        [SerializeField, Range(0.2f, 5f)] private float teleportErrorDistance = 4.0f;
         [SerializeField, Range(0.01f, 0.25f)] private float correctionSmoothTime = 0.08f;
+
+        [Header("Adaptive Error Thresholds")]
+        [Tooltip("When enabled, follow/snap/teleport thresholds scale with the estimated target velocity so high-speed movement + jitter is less likely to snap/teleport.")]
+        [SerializeField] private bool adaptiveErrorThresholds = true;
+
+        [Tooltip("Clamp the speed used for adaptive thresholds to avoid huge values during fast falls.")]
+        [SerializeField, Min(0f)] private float adaptiveSpeedCap = 12f;
+
+        [Tooltip("Snap threshold is max(baseSnap, speed * snapTimeWindow). TimeWindow is in seconds.")]
+        [SerializeField, Range(0.02f, 0.5f)] private float snapTimeWindow = 0.12f;
+
+        [Tooltip("Teleport threshold is max(baseTeleport, speed * teleportTimeWindow). TimeWindow is in seconds.")]
+        [SerializeField, Range(0.05f, 1.0f)] private float teleportTimeWindow = 0.30f;
+
+        [Tooltip("Follow threshold uses expectedStep * multiplier, where expectedStep is max(per-frame desired movement, speed*dt).")]
+        [SerializeField, Range(0.5f, 4f)] private float followExpectedStepMultiplier = 1.5f;
+
+        [Tooltip("Yaw error (degrees) above which yaw snaps to the target.")]
+        [SerializeField, Range(45f, 180f)] private float yawSnapDegrees = 140f;
 
         [Header("Debug")]
         [SerializeField] private bool debugGizmos;
@@ -107,6 +128,11 @@ namespace RoachRace.Networking
         private double _prevRenderTime;
         private static Texture2D _debugWhiteTex;
 
+        private Vector3 _lastDesiredPos;
+        private bool _hasLastDesiredPos;
+
+        private Vector3 _lastTargetVelocity;
+
         public override void OnStartClient()
         {
             base.OnStartClient();
@@ -117,27 +143,21 @@ namespace RoachRace.Networking
 
             if (visualRoot == null)
             {
-                Debug.LogError($"[{nameof(RemotePlayerVisualSmoother)}] VisualRoot is not assigned on '{gameObject.name}'.", gameObject);
                 throw new NullReferenceException($"[{nameof(RemotePlayerVisualSmoother)}] visualRoot is null on '{gameObject.name}'.");
             }
 
             visualRoot.transform.SetParent(null, true);
 
-            if (authorityRoot == null)
-                authorityRoot = transform;
-
             if (authorityRigidbody == null)
             {
-                // Prefer Rigidbody on authorityRoot, fall back to this GameObject.
-                if (!authorityRoot.TryGetComponent(out authorityRigidbody))
-                    TryGetComponent(out authorityRigidbody);
+                throw new NullReferenceException($"[{nameof(RemotePlayerVisualSmoother)}] authorityRigidbody is null on '{gameObject.name}'.");
             }
 
             // Offsets allow placing visuals with an offset while still smoothing in world-space.
             // IMPORTANT: store the positional offset in yaw-space so it rotates with interpolated yaw.
-            float authorityYaw = authorityRoot.eulerAngles.y;
+            float authorityYaw = authorityRigidbody.transform.eulerAngles.y;
             float visualYaw = visualRoot.eulerAngles.y;
-            Vector3 worldOffset = visualRoot.position - authorityRoot.position;
+            Vector3 worldOffset = visualRoot.position - authorityRigidbody.transform.position;
             Quaternion invAuthorityYaw = Quaternion.Inverse(Quaternion.Euler(0f, authorityYaw, 0f));
             _visualOffsetYawSpace = invAuthorityYaw * worldOffset;
             _visualYawOffset = Mathf.DeltaAngle(authorityYaw, visualYaw);
@@ -148,6 +168,8 @@ namespace RoachRace.Networking
             _snapshots.Clear();
             CaptureSnapshot();
             CaptureSnapshot();
+
+            _hasLastDesiredPos = false;
 
             _initialized = true;
         }
@@ -169,6 +191,7 @@ namespace RoachRace.Networking
             UnsubscribeFromTicks();
             _snapshots.Clear();
             _initialized = false;
+            _hasLastDesiredPos = false;
         }
 
         private void OnDestroy()
@@ -196,11 +219,36 @@ namespace RoachRace.Networking
             if (!haveTarget)
                 return;
 
-            // Apply positional offset in yaw-space so it rotates with yaw.
-            targetPos += Quaternion.Euler(0f, targetYaw, 0f) * _visualOffsetYawSpace;
+            _lastTargetVelocity = EstimateTargetVelocity();
+
+            // Apply visual yaw offset, but apply positional offset after yaw smoothing to avoid pops
+            // when yaw snaps due to packet delay/jitter.
             targetYaw = Mathf.Repeat(targetYaw + _visualYawOffset, 360f);
 
             ApplySmoothed(targetPos, targetYaw);
+        }
+
+        private Vector3 EstimateTargetVelocity()
+        {
+            int count = _snapshots.Count;
+            if (count == 0)
+                return Vector3.zero;
+
+            if (_lastRenderMode == RenderMode.ClampOldest)
+                return _snapshots[0].velocity;
+
+            if (_lastRenderMode == RenderMode.Freeze || _lastRenderMode == RenderMode.Extrapolate)
+                return _snapshots[count - 1].velocity;
+
+            if (_lastBracketIndexA >= 0 && _lastBracketIndexB >= 0 &&
+                _lastBracketIndexA < count && _lastBracketIndexB < count)
+            {
+                Vector3 va = _snapshots[_lastBracketIndexA].velocity;
+                Vector3 vb = _snapshots[_lastBracketIndexB].velocity;
+                return Vector3.Lerp(va, vb, Mathf.Clamp01(_lastT));
+            }
+
+            return _snapshots[count - 1].velocity;
         }
 
         private void RecordRenderTimeGraph(double renderTime)
@@ -282,20 +330,10 @@ namespace RoachRace.Networking
         {
             double t = GetApproximateNetworkTime();
 
-            Vector3 pos = authorityRoot.position;
-            float yaw = authorityRoot.eulerAngles.y;
+            Vector3 pos = authorityRigidbody.transform.position;
+            float yaw = authorityRigidbody.transform.eulerAngles.y;
 
-            Vector3 vel = Vector3.zero;
-            if (authorityRigidbody != null)
-            {
-                vel = authorityRigidbody.linearVelocity;
-            }
-            else if (_hasLastAuthority)
-            {
-                double dt = t - _lastAuthorityTime;
-                if (dt > 0.0001)
-                    vel = (pos - _lastAuthorityPos) / (float)dt;
-            }
+            Vector3 vel = authorityRigidbody.linearVelocity;
 
             _lastAuthorityPos = pos;
             _lastAuthorityTime = t;
@@ -438,7 +476,22 @@ namespace RoachRace.Networking
             m1 = Vector3.ClampMagnitude(m1, maxHermiteTangentDistance);
 
             mode = RenderMode.InterpolateHermite;
-            return Hermite(a.position, m0, b.position, m1, t);
+            Vector3 p = Hermite(a.position, m0, b.position, m1, t);
+
+            if (hermiteOvershootGuard)
+            {
+                // Prevent visible "corner cutting" / overshoot when velocity changes sharply between snapshots
+                // (common at low tick rates + rapid input direction switching).
+                Vector3 min = Vector3.Min(a.position, b.position) - Vector3.one * hermiteOvershootPadding;
+                Vector3 max = Vector3.Max(a.position, b.position) + Vector3.one * hermiteOvershootPadding;
+                if (p.x < min.x || p.y < min.y || p.z < min.z || p.x > max.x || p.y > max.y || p.z > max.z)
+                {
+                    mode = RenderMode.InterpolateLinear;
+                    return Vector3.Lerp(a.position, b.position, t);
+                }
+            }
+
+            return p;
         }
 
         // Matches the hermite basis used in Assets/GameData/Scripts/SplineSection.cs.
@@ -455,48 +508,92 @@ namespace RoachRace.Networking
 
         private void ApplySmoothed(Vector3 targetPos, float targetYaw)
         {
+            // targetPos is the authority position. We apply the visual offset after yaw smoothing.
+
             // Position.
-            float posError = Vector3.Distance(visualRoot.position, targetPos);
-            if (posError >= teleportErrorDistance)
-            {
-                visualRoot.position = targetPos;
-                _correctionVelocity = Vector3.zero;
-            }
-            else if (posError >= snapErrorDistance)
-            {
-                visualRoot.position = targetPos;
-                _correctionVelocity = Vector3.zero;
-            }
-            else if (posError >= smoothErrorDistance)
-            {
-                visualRoot.position = Vector3.SmoothDamp(visualRoot.position, targetPos, ref _correctionVelocity, correctionSmoothTime);
-            }
-            else if (posError > ignoreErrorDistance)
-            {
-                // Small errors: still converge, but quickly.
-                float fast = Mathf.Max(0.01f, correctionSmoothTime * 0.5f);
-                visualRoot.position = Vector3.SmoothDamp(visualRoot.position, targetPos, ref _correctionVelocity, fast);
-            }
-            else
-            {
-                visualRoot.position = targetPos;
-            }
-
-            currentYaw = visualRoot.eulerAngles.y;
-
-            // Yaw only.
-            float yawError = Mathf.Abs(Mathf.DeltaAngle(currentYaw, targetYaw));
+            float currentVisualYaw = visualRoot.eulerAngles.y;
+            float yawError = Mathf.Abs(Mathf.DeltaAngle(currentVisualYaw, targetYaw));
 
             float newYaw;
-            if (yawError >= 90f || posError >= snapErrorDistance)
+            if (yawError >= yawSnapDegrees)
             {
                 newYaw = targetYaw;
                 _correctionYawVelocity = 0f;
             }
             else
             {
-                newYaw = Mathf.SmoothDampAngle(currentYaw, targetYaw, ref _correctionYawVelocity, correctionSmoothTime);
+                newYaw = Mathf.SmoothDampAngle(currentVisualYaw, targetYaw, ref _correctionYawVelocity, correctionSmoothTime);
             }
+
+            // Offset rotates with the smoothed yaw to avoid sudden sideways shifts.
+            Vector3 desiredPos = targetPos + Quaternion.Euler(0f, newYaw, 0f) * _visualOffsetYawSpace;
+
+            // Estimate how far the desired position moved since last frame.
+            // This helps avoid treating normal forward motion as "error" (which can cause periodic snaps at high speed).
+            float expectedStep = 0f;
+            if (_hasLastDesiredPos)
+                expectedStep = Vector3.Distance(_lastDesiredPos, desiredPos);
+            _lastDesiredPos = desiredPos;
+            _hasLastDesiredPos = true;
+
+            float dt = Time.deltaTime;
+            float targetSpeed = _lastTargetVelocity.magnitude;
+            if (adaptiveErrorThresholds && adaptiveSpeedCap > 0f)
+                targetSpeed = Mathf.Min(targetSpeed, adaptiveSpeedCap);
+
+            // If renderTime stalls or brackets are missing for a frame, desiredPos may not move much.
+            // Back-stop expectedStep using estimated speed so followThreshold stays reasonable at high speed.
+            if (dt > 0.000001f)
+                expectedStep = Mathf.Max(expectedStep, targetSpeed * dt);
+
+            float posError = Vector3.Distance(visualRoot.position, desiredPos);
+
+            // If we're roughly within the expected per-frame travel distance, follow the target directly.
+            // Otherwise, apply correction logic for genuine network jitter/corrections.
+            float followThreshold = Mathf.Max(ignoreErrorDistance, expectedStep * followExpectedStepMultiplier);
+            if (posError <= followThreshold)
+            {
+                visualRoot.position = desiredPos;
+                _correctionVelocity = Vector3.zero;
+
+                currentYaw = newYaw;
+                visualRoot.rotation = Quaternion.Euler(0f, currentYaw, 0f);
+                return;
+            }
+
+            float effectiveSnap = snapErrorDistance;
+            float effectiveTeleport = teleportErrorDistance;
+            if (adaptiveErrorThresholds)
+            {
+                effectiveSnap = Mathf.Max(snapErrorDistance, targetSpeed * snapTimeWindow);
+                effectiveTeleport = Mathf.Max(teleportErrorDistance, targetSpeed * teleportTimeWindow);
+            }
+
+            if (posError >= effectiveTeleport)
+            {
+                visualRoot.position = desiredPos;
+                _correctionVelocity = Vector3.zero;
+            }
+            else if (posError >= effectiveSnap)
+            {
+                visualRoot.position = desiredPos;
+                _correctionVelocity = Vector3.zero;
+            }
+            else if (posError >= smoothErrorDistance)
+            {
+                visualRoot.position = Vector3.SmoothDamp(visualRoot.position, desiredPos, ref _correctionVelocity, correctionSmoothTime);
+            }
+            else if (posError > ignoreErrorDistance)
+            {
+                // Small errors: still converge, but quickly.
+                float fast = Mathf.Max(0.01f, correctionSmoothTime * 0.5f);
+                visualRoot.position = Vector3.SmoothDamp(visualRoot.position, desiredPos, ref _correctionVelocity, fast);
+            }
+            else
+            {
+                visualRoot.position = desiredPos;
+            }
+
             currentYaw = newYaw;
             visualRoot.rotation = Quaternion.Euler(0f, currentYaw, 0f);
         }
@@ -524,6 +621,15 @@ namespace RoachRace.Networking
             GUILayout.Label($"delay: {interpolationDelay:0.000}s  extrapMax: {maxExtrapolation:0.000}s");
             GUILayout.Label($"now: {_lastNow:0.000}  renderTime: {_lastRenderTime:0.000}");
             GUILayout.Label($"mode: {_lastRenderMode}  seg: {_lastBracketIndexA}->{_lastBracketIndexB}  t: {_lastT:0.000}");
+
+            if (adaptiveErrorThresholds)
+            {
+                float v = _lastTargetVelocity.magnitude;
+                float vc = adaptiveSpeedCap > 0f ? Mathf.Min(v, adaptiveSpeedCap) : v;
+                float es = Mathf.Max(snapErrorDistance, vc * snapTimeWindow);
+                float et = Mathf.Max(teleportErrorDistance, vc * teleportTimeWindow);
+                GUILayout.Label($"v={v:0.###} (cap {vc:0.###})  snapEff={es:0.###}  teleEff={et:0.###}");
+            }
 
             if (debugHudGraph)
             {

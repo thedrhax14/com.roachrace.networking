@@ -94,7 +94,7 @@ namespace RoachRace.Networking
         protected readonly SyncVar<Vector2> _targetLookInput = new (Vector2.zero);
         protected Vector2 _lookInput = Vector2.zero;
         public Vector2 LookInput => _lookInput;
-        public CasProp[] items;
+        protected CasProp[] items;
 
 
         private void Start()
@@ -128,7 +128,7 @@ namespace RoachRace.Networking
 
             animator.SetBool(_isFirstPersonHash, true);
 
-            TryEquipFirstCasItem();
+            InitializeItems();
         }
 
         public void SetPitch(float pitchInput)
@@ -153,33 +153,21 @@ namespace RoachRace.Networking
             _targetLookInput.Value = new Vector2(_lookInput.x, yawInput);
         }
 
-        private void TryEquipFirstCasItem()
+        private void InitializeItems()
         {
             items = visualRoot.GetComponentsInChildren<CasProp>(true);
             if (items.Length == 0) {
                 throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] No CAS items found on '{gameObject.name}'.");
             }
 
-            // Disable all first, then enable first item.
             foreach (CasProp prop in items)
-            {
-                if (prop != null)
-                    prop.gameObject.SetActive(false);
-            }
-
-            CasProp first = GetActiveItem();
-            if (first == null) {
-                throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] Could not get first CAS item on '{gameObject.name}'.");
-            }
-            first.gameObject.SetActive(true);
-            first.OnEquipped();
-            first.SetVisibility(true);
-            characterAnimationComponent.UpdateAnimationSettings(first.animationSettings);
+                prop.gameObject.SetActive(false);
         }
 
         public CasProp GetActiveItem()
         {
-            if(_activeItemIndex.Value < 0 || _activeItemIndex.Value >= items.Length)
+            if (items == null) InitializeItems();
+            if (_activeItemIndex.Value < 0 || _activeItemIndex.Value >= items.Length)
             {
                 Debug.LogError($"[{nameof(SurvivorRemoteAnimator)}] Active item index {_activeItemIndex.Value} is out of bounds (max {items.Length}) on '{gameObject.name}'. Defaulting to first item.", gameObject);
                 return items[0];
@@ -287,8 +275,7 @@ namespace RoachRace.Networking
             _moveInput.x = _moveX;
             _moveInput.y = _moveY;
 
-            _lookInput.x = Mathf.Lerp(_lookInput.x, _targetLookInput.Value.x, Time.deltaTime * 10f);
-            _lookInput.y = Mathf.Lerp(_lookInput.y, _targetLookInput.Value.y, Time.deltaTime * 10f);
+            _lookInput = Vector2.Lerp(_lookInput, _targetLookInput.Value, Time.deltaTime * 10f);
         }
 
         private static float SnapToZero(float value, float threshold)
