@@ -4,6 +4,8 @@ using FishNet.Object.Prediction;
 using FishNet.Transporting;
 using FishNet.Utility.Template;
 using RoachRace.Controls;
+using System.Collections.Generic;
+using Unity.Cinemachine;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -13,6 +15,14 @@ namespace RoachRace.Networking
     /// <summary>
     /// Predicted Rigidbody-based "human" motor using FishNet prediction.
     /// Movement is driven by AddForce and yaw-only rotation is driven by MoveRotation.
+    /// Currently there is a strange problem. At 150-180 ms it was observed that the motor
+    /// would teleport to a position as if it didn't jump while jump is being predicted.
+    /// Interesting enough, this only happened when there was some latency, not with
+    /// minimum possible latency (50ms). Another issue if user strafes fast left and right
+    /// then player jitters visible. Needs further investigation. Current script for smoother
+    /// can't smooth it properly. Additionally, because of smoothing delay the controls don't
+    /// feel instant enough. Needs further investigation and tuning. Potential idea is to run
+    /// prediction faster then normal ticks but that may have other side effects.
     /// </summary>
     public class PredictedHumanMotor : TickNetworkBehaviour
     {
@@ -32,6 +42,8 @@ namespace RoachRace.Networking
         public struct ReconcileData : IReconcileData
         {
             public PredictionRigidbody Root;
+            public int CoyoteTicks;
+            public int JumpBufferTicks;
 
             private uint _tick;
             public void Dispose() { }
@@ -40,44 +52,27 @@ namespace RoachRace.Networking
         }
         #endregion
 
+        [Header("Math")]
+        [SerializeField] private HumanMotorMathProfile motor;
+
         [Header("References")]
         [SerializeField] private SurvivorRemoteAnimator survivorRemoteAnimator;
         [SerializeField] private HumanCameraController view;
         protected CapsuleCollider capsuleCollider;
+        [SerializeField] private CinemachineCamera virtualCamera;
+
+        [Header("Debug")]
+        [Tooltip("Optional. If assigned, receives debug data such as replicate state history for editor visualization.")]
+        [SerializeField] private PredictedHumanMotorDebug debug;
 
         [Header("Input")]
         [SerializeField] private InputActionReference moveAction;
         [SerializeField] private InputActionReference jumpAction;
 
-        [Header("Tuning")]
-        [SerializeField] private float walkSpeed = 1.3f;
-        [SerializeField] private float runSpeed = 5f;
-        [SerializeField] private float turnSpeed = 720f; // deg/sec
-
-        [Header("Movement Forces")]
-        [Tooltip("Maximum planar acceleration (m/s^2) applied while there is movement input.")]
-        [SerializeField, Min(0f)] private float maxPlanarAcceleration = 25f;
-
-        [Tooltip("Maximum planar deceleration (m/s^2) applied when there is no movement input.")]
-        [SerializeField, Min(0f)] private float maxPlanarDeceleration = 35f;
-
-        [Header("Jump")]
-        [Tooltip("Upward velocity change applied when jumping.")]
-        [SerializeField, Min(0f)] private float jumpVelocityChange = 5.5f;
-
-        [Tooltip("Layer(s) considered ground for jump checks.")]
-        [SerializeField] private LayerMask groundMask = ~0;
-
-        [Tooltip("Sphere radius used for ground check.")]
-        [SerializeField, Min(0.01f)] private float groundCheckRadius = 0.2f;
-
         [Header("Debug")]
         [SerializeField] private bool drawGroundCheckGizmos = true;
         [SerializeField] private Color groundedGizmoColor = new(0.2f, 1f, 0.2f, 0.6f);
         [SerializeField] private Color notGroundedGizmoColor = new(1f, 0.2f, 0.2f, 0.6f);
-
-        [Header("Constraints")]
-        [SerializeField] private bool lockPitchAndRoll = true;
 
         private float _bodyYaw;
         private Rigidbody rb;
@@ -86,9 +81,27 @@ namespace RoachRace.Networking
 
         private bool _jumpQueued;
 
+        private int _coyoteTicksRemaining;
+        private int _jumpBufferTicksRemaining;
+        private int _coyoteTicksMax;
+        private int _jumpBufferTicksMax;
+
+        private readonly HashSet<int> _groundColliderIds = new();
+    #if UNITY_EDITOR
+        private Vector3 _lastGroundNormal;
+        private Vector3 _lastGroundPoint;
+        private bool _hasLastGround;
+    #endif
+
 
         private void Awake()
         {
+            if (motor == null)
+            {
+                Debug.LogError($"[{nameof(PredictedHumanMotor)}] motor is not assigned! Please assign it in the Inspector.", gameObject);
+                throw new System.NullReferenceException($"[{nameof(PredictedHumanMotor)}] motor is null on GameObject '{gameObject.name}'.");
+            }
+
             if (rb == null && !TryGetComponent(out rb))
             {
                 throw new System.NullReferenceException($"[{nameof(PredictedHumanMotor)}] Rigidbody is null on GameObject '{gameObject.name}'.");
@@ -112,7 +125,7 @@ namespace RoachRace.Networking
 
             _root.Initialize(rb);
 
-            if (lockPitchAndRoll)
+            if (motor.LockPitchAndRoll)
                 rb.constraints |= RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
         }
 
@@ -123,6 +136,9 @@ namespace RoachRace.Networking
             // Rigidbodies need Tick + PostTick.
             SetTickCallbacks(TickCallback.Tick | TickCallback.PostTick);
             _dt = (float)TimeManager.TickDelta;
+
+            // Cache tick-based windows for deterministic simulation.
+            motor.ComputeTickWindows(_dt, out _coyoteTicksMax, out _jumpBufferTicksMax);
         }
 
         public override void OnOwnershipClient(NetworkConnection prevOwner)
@@ -131,6 +147,7 @@ namespace RoachRace.Networking
 
             if (!IsClientInitialized) return;
             view.enabled = IsOwner;
+            virtualCamera.enabled = IsOwner;
             if (IsOwner) EnableInput();
         }
 
@@ -152,6 +169,9 @@ namespace RoachRace.Networking
             jumpAction.action.performed -= JumpAction_Performed;
             jumpAction.action.performed += JumpAction_Performed;
             jumpAction.action.Enable();
+            
+            virtualCamera.transform.parent = null;
+            virtualCamera.Prioritize();
         }
 
         private void JumpAction_Performed(InputAction.CallbackContext ctx)
@@ -169,11 +189,7 @@ namespace RoachRace.Networking
 
             Vector2 move = moveAction.action.ReadValue<Vector2>();
 
-            _bodyYaw = Mathf.MoveTowardsAngle(
-                _bodyYaw,
-                view.Yaw,
-                turnSpeed * _dt
-            );
+            _bodyYaw = motor.StepBodyYaw(_bodyYaw, view.Yaw, _dt);
 
             bool jump = _jumpQueued;
             _jumpQueued = false;
@@ -188,19 +204,53 @@ namespace RoachRace.Networking
 
         private bool IsGrounded()
         {
-            // Small, deterministic ground probe.
-            // Cast from just above the rigidbody position to reduce false negatives on slopes/steps.
-            Vector3 origin = rb.position + capsuleCollider.center;
-            float castDistance = capsuleCollider.height * 0.5f + 0.05f;
-            return Physics.SphereCast(
-                origin,
-                groundCheckRadius,
-                Vector3.down,
-                out _,
-                castDistance,
-                groundMask,
-                QueryTriggerInteraction.Ignore
-            );
+            return _groundColliderIds.Count > 0;
+        }
+
+        private void OnCollisionEnter(Collision collision)
+        {
+            // OnCollisionStay(collision);
+        }
+
+        private void OnCollisionStay(Collision collision)
+        {
+            if (collision == null)
+                return;
+
+#if UNITY_EDITOR
+            debug?.RecordCollisionStayTick(gameObject.name);
+#endif
+
+            Collider other = collision.collider;
+            if (other == null)
+                return;
+
+            int id = other.GetInstanceID();
+            if (motor.TryGetGroundContact(rb, capsuleCollider, collision, out ContactPoint groundContact))
+            {
+                _groundColliderIds.Add(id);
+                #if UNITY_EDITOR
+                _lastGroundPoint = groundContact.point;
+                _lastGroundNormal = groundContact.normal;
+                _hasLastGround = true;
+                #endif
+            }
+            else
+                _groundColliderIds.Remove(id);
+        }
+
+        private void OnCollisionExit(Collision collision)
+        {
+            Collider other = collision?.collider;
+            if (other == null)
+                return;
+
+            _groundColliderIds.Remove(other.GetInstanceID());
+        }
+
+        private void OnDisable()
+        {
+            _groundColliderIds.Clear();
         }
 
         private void OnDrawGizmosSelected()
@@ -214,43 +264,46 @@ namespace RoachRace.Networking
             if (rbGizmo == null)
                 return;
 
-            Vector3 origin = rbGizmo.position + capsuleCollider.center;
-            float castDistance = capsuleCollider.height * 0.5f + 0.05f;
-
-            bool hit = Physics.SphereCast(
-                origin,
-                groundCheckRadius,
-                Vector3.down,
-                out RaycastHit hitInfo,
-                castDistance,
-                groundMask,
-                QueryTriggerInteraction.Ignore
-            );
-
-            Gizmos.color = hit ? groundedGizmoColor : notGroundedGizmoColor;
-
-            // Origin sphere.
-            Gizmos.DrawWireSphere(origin, groundCheckRadius);
-
-            // Cast line.
-            Vector3 end = origin + Vector3.down * castDistance;
-            Gizmos.DrawLine(origin, end);
-
-            // Hit point sphere.
-            if (hit)
+            // Contact-based ground visualization.
+            if (Application.isPlaying)
             {
-                Gizmos.DrawWireSphere(hitInfo.point, groundCheckRadius * 0.6f);
-                Gizmos.DrawLine(hitInfo.point, hitInfo.point + hitInfo.normal * 0.25f);
+                bool grounded = IsGrounded();
+                Gizmos.color = grounded ? groundedGizmoColor : notGroundedGizmoColor;
+
+                Vector3 center = rbGizmo.position + capsuleCollider.center;
+                Gizmos.DrawWireSphere(center, 0.05f);
+
+                if (_hasLastGround)
+                {
+                    Gizmos.color = new Color(0.2f, 0.9f, 1f, 0.9f);
+                    Gizmos.DrawWireSphere(_lastGroundPoint, 0.05f);
+                    Gizmos.DrawLine(_lastGroundPoint, _lastGroundPoint + _lastGroundNormal * 0.35f);
+                }
+
+                return;
             }
-            else
-            {
-                Gizmos.DrawWireSphere(end, groundCheckRadius * 0.6f);
-            }
+
+            // Edit-mode visualization: approximate "feet" point of the capsule.
+            // (Collision contacts only exist during play mode.)
+            Gizmos.color = notGroundedGizmoColor;
+            Vector3 editCenter = rbGizmo.position + capsuleCollider.center;
+            Gizmos.DrawWireSphere(editCenter, 0.05f);
+
+            float radius = capsuleCollider.radius;
+            float halfHeight = Mathf.Max(radius, capsuleCollider.height * 0.5f);
+            Vector3 bottom = editCenter + Vector3.down * (halfHeight - radius);
+            Gizmos.DrawWireSphere(bottom, radius);
+            Gizmos.DrawLine(bottom, bottom + Vector3.up * 0.25f);
         }
 
         public override void CreateReconcile()
         {
-            ReconcileData rd = new() { Root = _root };
+            ReconcileData rd = new()
+            {
+                Root = _root,
+                CoyoteTicks = _coyoteTicksRemaining,
+                JumpBufferTicks = _jumpBufferTicksRemaining
+            };
 
             PerformReconcile(rd);
         }
@@ -262,43 +315,26 @@ namespace RoachRace.Networking
 
             _root.MoveRotation(Quaternion.Euler(0f, rd.Yaw, 0f));
             bool isGrounded = IsGrounded();
-            if(isGrounded) {
-                // Jump is edge-triggered (queued from InputAction.performed and consumed once).
-                if (rd.Jump && jumpVelocityChange > 0f)
-                    _root.AddForce(Vector3.up * jumpVelocityChange, ForceMode.VelocityChange);
-                Vector2 moveInput = Vector2.ClampMagnitude(rd.Move, 1f);
-                float inputMag = Mathf.Clamp01(moveInput.magnitude);
-                bool hasInput = inputMag > 0.0001f;
+            bool groundedProbe = isGrounded;
 
-                // Game design: run only when there is forward input.
-                // Backwards or direct left/right (no forward component) forces walk speed.
-                const float axisDeadZone = 0.01f;
-                bool hasForwardInput = moveInput.y > axisDeadZone;
-                float moveSpeed = hasForwardInput ? runSpeed : walkSpeed;
+            motor.UpdateJumpWindows(isGrounded, rd.Jump, ref _coyoteTicksRemaining, ref _jumpBufferTicksRemaining, _coyoteTicksMax, _jumpBufferTicksMax);
 
-                float yaw = rb.rotation.eulerAngles.y;
-                Quaternion yawRot = Quaternion.Euler(0f, yaw, 0f);
-                Vector3 moveWorld = yawRot * new Vector3(moveInput.x, 0f, moveInput.y);
-
-                // Preserve vertical velocity from physics (gravity/jumps/steps).
-                Vector3 currentVel = rb.linearVelocity;
-                Vector3 desiredVel = hasInput ? (moveWorld * (moveSpeed * inputMag)) : Vector3.zero;
-                desiredVel.y = currentVel.y;
-
-                // Acceleration-based planar movement toward the desired velocity.
-                Vector3 currentPlanarVel = new(currentVel.x, 0f, currentVel.z);
-                Vector3 desiredPlanarVel = new(desiredVel.x, 0f, desiredVel.z);
-
-                float dt = Mathf.Max(0.000001f, _dt);
-                Vector3 desiredPlanarAccel = (desiredPlanarVel - currentPlanarVel) / dt;
-                float accelLimit = hasInput ? maxPlanarAcceleration : maxPlanarDeceleration;
-                if (accelLimit > 0f)
-                    desiredPlanarAccel = Vector3.ClampMagnitude(desiredPlanarAccel, accelLimit);
-                else
-                    desiredPlanarAccel = Vector3.zero;
-                
-                _root.AddForce(desiredPlanarAccel, ForceMode.Acceleration);
+            bool appliedJump = false;
+            if (motor.TryConsumeJump(ref _coyoteTicksRemaining, ref _jumpBufferTicksRemaining, out Vector3 jumpVelChange))
+            {
+                _root.AddForce(jumpVelChange, ForceMode.VelocityChange);
+                isGrounded = false;
+                appliedJump = true;
             }
+
+#if UNITY_EDITOR
+            debug?.RecordReplicateState(state, groundedProbe, rd.Jump, appliedJump, rd.GetTick());
+#endif
+
+            float yaw = rb.rotation.eulerAngles.y;
+            Vector3 currentVel = rb.linearVelocity;
+            Vector3 planarAccel = motor.ComputePlanarAcceleration(rd.Move, yaw, currentVel, isGrounded, _dt);
+            _root.AddForce(planarAccel, ForceMode.Acceleration);
 
             _root.Simulate();
         }
@@ -307,6 +343,10 @@ namespace RoachRace.Networking
         private void PerformReconcile(ReconcileData rd, Channel channel = Channel.Unreliable)
         {
             _root.Reconcile(rd.Root);
+
+            // Keep prediction helper state in sync.
+            _coyoteTicksRemaining = rd.CoyoteTicks;
+            _jumpBufferTicksRemaining = rd.JumpBufferTicks;
         }
     }
 }

@@ -2,8 +2,9 @@ using System;
 using FishNet.Connection;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
-using KINEMATION.CharacterAnimationSystem.Examples.Scripts;
 using KINEMATION.CharacterAnimationSystem.Scripts.Runtime.Core;
+using RoachRace.Interaction;
+using RoachRace.Networking.Inventory;
 using UnityEngine;
 
 namespace RoachRace.Networking
@@ -63,7 +64,6 @@ namespace RoachRace.Networking
         [SerializeField] private string useItemIdParam = "UseItemId";
 
         private readonly SyncVar<bool> _isCrouching = new(false);
-        private readonly SyncVar<int> _activeItemIndex = new(0);
 
         private int _moveXHash;
         private int _moveYHash;
@@ -87,14 +87,14 @@ namespace RoachRace.Networking
         private float _gait;
 
         // Dependecies for ProceduralAnimationSettings
-        public Transform RightHandIkTarget => GetActiveItem() == null ? null : GetActiveItem().rightHandTarget;
-        public Transform LeftHandIkTarget => GetActiveItem() == null ? null : GetActiveItem().leftHandTarget;
+        public Transform RightHandIkTarget => GetActiveItem() == null ? null : GetActiveItem().GetRightHandTarget();
+        public Transform LeftHandIkTarget => GetActiveItem() == null ? null : GetActiveItem().GetLeftHandTarget();
         protected Vector2 _moveInput = new ();
         public Vector2 MoveInput => _moveInput;
         protected readonly SyncVar<Vector2> _targetLookInput = new (Vector2.zero);
         protected Vector2 _lookInput = Vector2.zero;
         public Vector2 LookInput => _lookInput;
-        protected CasProp[] items;
+        protected NetworkPlayerInventory inventory;
 
 
         private void Start()
@@ -108,10 +108,9 @@ namespace RoachRace.Networking
             {
                 throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] animator is null on '{gameObject.name}'.");
             }
-
-            if(items == null || items.Length == 0)
+            if(!TryGetComponent(out inventory))
             {
-                throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] No CAS items found on '{gameObject.name}'. At least one should be added manually.");
+                throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] NetworkPlayerInventory is not assigned on '{gameObject.name}'.");
             }
 
             _moveXHash = Animator.StringToHash(moveXParam);
@@ -126,9 +125,9 @@ namespace RoachRace.Networking
             _useItemTriggerHash = Animator.StringToHash(useItemTriggerParam);
             _useItemIdHash = Animator.StringToHash(useItemIdParam);
 
-            animator.SetBool(_isFirstPersonHash, true);
-
-            InitializeItems();
+            if(animator.gameObject.activeInHierarchy) {
+                animator.SetBool(_isFirstPersonHash, true);
+            }
         }
 
         public void SetPitch(float pitchInput)
@@ -153,26 +152,17 @@ namespace RoachRace.Networking
             _targetLookInput.Value = new Vector2(_lookInput.x, yawInput);
         }
 
-        private void InitializeItems()
+        public RoachRaceItemComponent GetActiveItem()
         {
-            items = visualRoot.GetComponentsInChildren<CasProp>(true);
-            if (items.Length == 0) {
-                throw new NullReferenceException($"[{nameof(SurvivorRemoteAnimator)}] No CAS items found on '{gameObject.name}'.");
-            }
-
-            foreach (CasProp prop in items)
-                prop.gameObject.SetActive(false);
+            if(inventory == null) TryGetComponent(out inventory);
+            if(inventory.TryGetSelectedItemInstance(out var slotState, out var itemInstance)) 
+                return itemInstance.ItemComponent;
+            else return null;
         }
 
-        public CasProp GetActiveItem()
+        public void UpdateActiveItem()
         {
-            if (items == null) InitializeItems();
-            if (_activeItemIndex.Value < 0 || _activeItemIndex.Value >= items.Length)
-            {
-                Debug.LogError($"[{nameof(SurvivorRemoteAnimator)}] Active item index {_activeItemIndex.Value} is out of bounds (max {items.Length}) on '{gameObject.name}'. Defaulting to first item.", gameObject);
-                return items[0];
-            }
-            return items[_activeItemIndex.Value];
+            characterAnimationComponent.UpdateAnimationSettings(GetActiveItem().animationSettings);
         }
 
         public override void OnStartClient()
@@ -268,10 +258,12 @@ namespace RoachRace.Networking
             _moveY = SnapToZero(_moveY, paramSnapToZeroThreshold);
             _gait = SnapToZero(_gait, paramSnapToZeroThreshold);
 
-            animator.SetBool(_isMovingHash, isMoving);
-            animator.SetFloat(_moveXHash, _moveX);
-            animator.SetFloat(_moveYHash, _moveY);
-            animator.SetFloat(_gaitHash, _gait);
+            if(animator.gameObject.activeInHierarchy) {
+                animator.SetBool(_isMovingHash, isMoving);
+                animator.SetFloat(_moveXHash, _moveX);
+                animator.SetFloat(_moveYHash, _moveY);
+                animator.SetFloat(_gaitHash, _gait);
+            }
             _moveInput.x = _moveX;
             _moveInput.y = _moveY;
 
@@ -293,7 +285,7 @@ namespace RoachRace.Networking
 
         private void ApplyCrouch(bool crouching)
         {
-            if (animator == null)
+            if (animator == null || !animator.gameObject.activeInHierarchy)
                 return;
 
             animator.SetBool(_crouchHash, crouching);

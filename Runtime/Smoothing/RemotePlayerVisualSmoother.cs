@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using FishNet.Connection;
 using FishNet.Managing.Timing;
 using FishNet.Object;
-using Unity.Cinemachine;
 using UnityEngine;
 
 namespace RoachRace.Networking
@@ -15,7 +13,7 @@ namespace RoachRace.Networking
     [AddComponentMenu("RoachRace/Networking/Smoothing/Remote Player Visual Smoother")]
     public class RemotePlayerVisualSmoother : NetworkBehaviour
     {
-        private enum RenderMode : byte
+        internal enum RenderMode : byte
         {
             None = 0,
             InterpolateLinear = 1,
@@ -26,7 +24,7 @@ namespace RoachRace.Networking
         }
 
         [Serializable]
-        private struct PlayerSnapshot
+        internal struct PlayerSnapshot
         {
             public double serverTime;
             public Vector3 position;
@@ -50,7 +48,6 @@ namespace RoachRace.Networking
         [SerializeField] private bool useHermite = true;
         [SerializeField, Range(0.0f, 5f)] private float maxHermiteTangentDistance = 0.5f;
         [SerializeField, Range(-1f, 1f)] private float hermiteVelocityDotFallback = 0.0f;
-        [SerializeField] private CinemachineCamera virtualCamera;
 
         [Header("Hermite Safety")]
         [Tooltip("If enabled, Hermite interpolation falls back to linear when the curve point leaves the segment AABB expanded by padding.")]
@@ -86,17 +83,8 @@ namespace RoachRace.Networking
         [SerializeField, Range(45f, 180f)] private float yawSnapDegrees = 140f;
 
         [Header("Debug")]
-        [SerializeField] private bool debugGizmos;
-        [SerializeField] private bool debugHud;
-        [SerializeField] private bool debugHudGraph;
-        [SerializeField, Range(30, 600)] private int debugGraphSamples = 240;
-        [SerializeField, Range(20f, 140f)] private float debugGraphHeight = 70f;
-        [Tooltip("Vertical scale for the graph in ms per frame. If your renderTime is tick-quantized you will see spikes near 50ms.")]
-        [SerializeField, Range(2.5f, 80f)] private float debugGraphMsScale = 50f;
-        [SerializeField, Range(0.01f, 0.35f)] private float debugSnapshotSphereRadius = 0.05f;
-        [SerializeField] private Color debugSnapshotColor = new(0f, 0.9f, 0.3f, 0.9f);
-        [SerializeField] private Color debugSegmentColor = new(1f, 0.9f, 0.1f, 0.95f);
-        [SerializeField] private Color debugCursorColor = new(0.2f, 0.7f, 1f, 0.95f);
+        [Tooltip("Optional. If assigned, receives debug data (HUD/graph/gizmos) from this smoother.")]
+        [SerializeField] private RemotePlayerVisualSmootherDebug debug;
 
         private readonly List<PlayerSnapshot> _snapshots = new(12);
 
@@ -110,23 +98,11 @@ namespace RoachRace.Networking
         private bool _subscribed;
         private bool _initialized;
 
-        private Vector3 _lastAuthorityPos;
-        private double _lastAuthorityTime;
-        private bool _hasLastAuthority;
-
         private RenderMode _lastRenderMode;
         private int _lastBracketIndexA = -1;
         private int _lastBracketIndexB = -1;
-        private double _lastNow;
-        private double _lastRenderTime;
         private float _lastT;
         private float currentYaw;
-
-        private float[] _renderTimeDeltaMs;
-        private int _renderTimeDeltaIndex;
-        private bool _hasPrevRenderTime;
-        private double _prevRenderTime;
-        private static Texture2D _debugWhiteTex;
 
         private Vector3 _lastDesiredPos;
         private bool _hasLastDesiredPos;
@@ -162,6 +138,9 @@ namespace RoachRace.Networking
             _visualOffsetYawSpace = invAuthorityYaw * worldOffset;
             _visualYawOffset = Mathf.DeltaAngle(authorityYaw, visualYaw);
 
+            if(debug!=null) debug.Initialize(gameObject.name, visualRoot, _visualOffsetYawSpace, _visualYawOffset);
+            if(debug!=null) debug.SetSnapshotSource(_snapshots);
+
             SubscribeToTicks();
 
             // Prime buffer with current state.
@@ -174,17 +153,6 @@ namespace RoachRace.Networking
             _initialized = true;
         }
 
-        public override void OnOwnershipClient(NetworkConnection prevOwner)
-        {
-            base.OnOwnershipClient(prevOwner);
-            virtualCamera.enabled = IsOwner;
-            if(IsOwner)
-            {
-                virtualCamera.transform.parent = null;
-                virtualCamera.Prioritize();
-            }
-        }
-
         public override void OnStopClient()
         {
             base.OnStopClient();
@@ -192,6 +160,8 @@ namespace RoachRace.Networking
             _snapshots.Clear();
             _initialized = false;
             _hasLastDesiredPos = false;
+
+            if(debug!=null) debug.SetSnapshotSource(_snapshots);
         }
 
         private void OnDestroy()
@@ -210,10 +180,7 @@ namespace RoachRace.Networking
             double now = GetApproximateNetworkTime();
             double renderTime = now - interpolationDelay;
 
-            _lastNow = now;
-            _lastRenderTime = renderTime;
-
-            RecordRenderTimeGraph(renderTime);
+            if(debug!=null) debug.RecordRenderTimeGraph(renderTime);
 
             bool haveTarget = TryGetTarget(renderTime, out Vector3 targetPos, out float targetYaw);
             if (!haveTarget)
@@ -226,6 +193,25 @@ namespace RoachRace.Networking
             targetYaw = Mathf.Repeat(targetYaw + _visualYawOffset, 360f);
 
             ApplySmoothed(targetPos, targetYaw);
+
+            if(debug!=null) debug.SetFrameState(
+                IsClientInitialized,
+                maxSnapshots,
+                interpolationDelay,
+                maxExtrapolation,
+                now,
+                renderTime,
+                _lastRenderMode,
+                _lastBracketIndexA,
+                _lastBracketIndexB,
+                _lastT,
+                _lastTargetVelocity,
+                adaptiveErrorThresholds,
+                adaptiveSpeedCap,
+                snapErrorDistance,
+                teleportErrorDistance,
+                snapTimeWindow,
+                teleportTimeWindow);
         }
 
         private Vector3 EstimateTargetVelocity()
@@ -249,46 +235,6 @@ namespace RoachRace.Networking
             }
 
             return _snapshots[count - 1].velocity;
-        }
-
-        private void RecordRenderTimeGraph(double renderTime)
-        {
-            if (!debugHud || !debugHudGraph)
-                return;
-
-            int sampleCount = Mathf.Clamp(debugGraphSamples, 30, 600);
-            if (_renderTimeDeltaMs == null || _renderTimeDeltaMs.Length != sampleCount)
-            {
-                _renderTimeDeltaMs = new float[sampleCount];
-                _renderTimeDeltaIndex = 0;
-                _hasPrevRenderTime = false;
-                _prevRenderTime = 0d;
-            }
-
-            float deltaMs = 0f;
-            if (_hasPrevRenderTime)
-                deltaMs = (float)((renderTime - _prevRenderTime) * 1000.0);
-
-            _prevRenderTime = renderTime;
-            _hasPrevRenderTime = true;
-
-            _renderTimeDeltaMs[_renderTimeDeltaIndex] = deltaMs;
-            _renderTimeDeltaIndex = (_renderTimeDeltaIndex + 1) % _renderTimeDeltaMs.Length;
-        }
-
-        private static Texture2D GetWhiteTex()
-        {
-            if (_debugWhiteTex != null)
-                return _debugWhiteTex;
-
-            _debugWhiteTex = new Texture2D(1, 1, TextureFormat.RGBA32, false)
-            {
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Point
-            };
-            _debugWhiteTex.SetPixel(0, 0, Color.white);
-            _debugWhiteTex.Apply(false, true);
-            return _debugWhiteTex;
         }
 
         private void SubscribeToTicks()
@@ -330,14 +276,10 @@ namespace RoachRace.Networking
         {
             double t = GetApproximateNetworkTime();
 
-            Vector3 pos = authorityRigidbody.transform.position;
+            Vector3 pos = authorityRigidbody.position;
             float yaw = authorityRigidbody.transform.eulerAngles.y;
 
             Vector3 vel = authorityRigidbody.linearVelocity;
-
-            _lastAuthorityPos = pos;
-            _lastAuthorityTime = t;
-            _hasLastAuthority = true;
 
             // Keep buffer time monotonic even if FishNet adjusts Tick backwards.
             if (_snapshots.Count > 0)
@@ -358,6 +300,8 @@ namespace RoachRace.Networking
             int overflow = _snapshots.Count - maxSnapshots;
             if (overflow > 0)
                 _snapshots.RemoveRange(0, overflow);
+
+            if(debug!=null) debug.SetSnapshotSource(_snapshots);
         }
 
         private double GetApproximateNetworkTime()
@@ -597,148 +541,5 @@ namespace RoachRace.Networking
             currentYaw = newYaw;
             visualRoot.rotation = Quaternion.Euler(0f, currentYaw, 0f);
         }
-
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-        private void OnGUI()
-        {
-            if (!debugHud)
-                return;
-
-            if (!_initialized || !enabled)
-                return;
-
-            if (!IsClientInitialized)
-                return;
-
-            const int pad = 8;
-            const int w = 420;
-            int h = debugHudGraph ? 230 : 140;
-            Rect r = new(pad, pad, w, h);
-            GUI.Box(r, $"{nameof(RemotePlayerVisualSmoother)}\n{gameObject.name}");
-
-            GUILayout.BeginArea(new Rect(pad + 10, pad + 24, w - 20, h - 30));
-            GUILayout.Label($"snapshots: {_snapshots.Count}/{maxSnapshots}");
-            GUILayout.Label($"delay: {interpolationDelay:0.000}s  extrapMax: {maxExtrapolation:0.000}s");
-            GUILayout.Label($"now: {_lastNow:0.000}  renderTime: {_lastRenderTime:0.000}");
-            GUILayout.Label($"mode: {_lastRenderMode}  seg: {_lastBracketIndexA}->{_lastBracketIndexB}  t: {_lastT:0.000}");
-
-            if (adaptiveErrorThresholds)
-            {
-                float v = _lastTargetVelocity.magnitude;
-                float vc = adaptiveSpeedCap > 0f ? Mathf.Min(v, adaptiveSpeedCap) : v;
-                float es = Mathf.Max(snapErrorDistance, vc * snapTimeWindow);
-                float et = Mathf.Max(teleportErrorDistance, vc * teleportTimeWindow);
-                GUILayout.Label($"v={v:0.###} (cap {vc:0.###})  snapEff={es:0.###}  teleEff={et:0.###}");
-            }
-
-            if (debugHudGraph)
-            {
-                GUILayout.Space(6);
-                GUILayout.Label("renderTime Δ per frame (ms) — spikes indicate tick-quantized time");
-
-                Rect graphRect = GUILayoutUtility.GetRect(w - 20, debugGraphHeight);
-                DrawRenderTimeDeltaGraph(graphRect);
-            }
-
-            GUILayout.EndArea();
-        }
-
-        private void DrawRenderTimeDeltaGraph(Rect rect)
-        {
-            if (_renderTimeDeltaMs == null || _renderTimeDeltaMs.Length < 2)
-                return;
-
-            Texture2D tex = GetWhiteTex();
-
-            // Background.
-            Color prevColor = GUI.color;
-            GUI.color = new Color(0f, 0f, 0f, 0.35f);
-            GUI.DrawTexture(rect, tex);
-            GUI.color = prevColor;
-
-            float height = Mathf.Max(10f, rect.height);
-            float width = Mathf.Max(10f, rect.width);
-            int n = _renderTimeDeltaMs.Length;
-
-            float maxMs = Mathf.Max(1f, debugGraphMsScale);
-
-            // Draw a baseline at 0 and at 50ms for reference.
-            float yBottom = rect.y + height;
-            DrawHLine(rect.x, rect.x + width, yBottom - 1f, new Color(1f, 1f, 1f, 0.15f));
-
-            float ref50 = Mathf.Clamp01(50f / maxMs);
-            float y50 = rect.y + height * (1f - ref50);
-            DrawHLine(rect.x, rect.x + width, y50, new Color(1f, 0.9f, 0.1f, 0.18f));
-
-            // Bars.
-            float barW = width / n;
-            for (int i = 0; i < n; i++)
-            {
-                int idx = (_renderTimeDeltaIndex + i) % n;
-                float ms = _renderTimeDeltaMs[idx];
-                float norm = Mathf.Clamp01(ms / maxMs);
-                float barH = norm * height;
-
-                float x = rect.x + i * barW;
-                float y = rect.y + (height - barH);
-
-                // Color spikes more vividly.
-                Color c = ms >= debugGraphMsScale ? new Color(1f, 0.25f, 0.25f, 0.85f) : new Color(0.2f, 0.7f, 1f, 0.7f);
-                GUI.color = c;
-                GUI.DrawTexture(new Rect(x, y, Mathf.Max(1f, barW), barH), tex);
-            }
-
-            GUI.color = prevColor;
-        }
-
-        private static void DrawHLine(float x0, float x1, float y, Color c)
-        {
-            Texture2D tex = GetWhiteTex();
-            Color prev = GUI.color;
-            GUI.color = c;
-            GUI.DrawTexture(new Rect(x0, y, Mathf.Max(1f, x1 - x0), 1f), tex);
-            GUI.color = prev;
-        }
-
-        private void OnDrawGizmos()
-        {
-            if (!debugGizmos)
-                return;
-
-            if (!Application.isPlaying)
-                return;
-
-            // Snapshot points.
-            Gizmos.color = debugSnapshotColor;
-            for (int i = 0; i < _snapshots.Count; i++)
-            {
-                Vector3 pi = _snapshots[i].position + Quaternion.Euler(0f, _snapshots[i].yaw, 0f) * _visualOffsetYawSpace;
-                Gizmos.DrawSphere(pi, debugSnapshotSphereRadius);
-                if (i > 0)
-                {
-                    Vector3 pj = _snapshots[i - 1].position + Quaternion.Euler(0f, _snapshots[i - 1].yaw, 0f) * _visualOffsetYawSpace;
-                    Gizmos.DrawLine(pj, pi);
-                }
-            }
-
-            // Current interpolation segment.
-            if (_lastBracketIndexA >= 0 && _lastBracketIndexB >= 0 &&
-                _lastBracketIndexA < _snapshots.Count && _lastBracketIndexB < _snapshots.Count)
-            {
-                Vector3 a = _snapshots[_lastBracketIndexA].position + Quaternion.Euler(0f, _snapshots[_lastBracketIndexA].yaw, 0f) * _visualOffsetYawSpace;
-                Vector3 b = _snapshots[_lastBracketIndexB].position + Quaternion.Euler(0f, _snapshots[_lastBracketIndexB].yaw, 0f) * _visualOffsetYawSpace;
-                Gizmos.color = debugSegmentColor;
-                Gizmos.DrawLine(a, b);
-            }
-
-            // Render cursor at current visual root.
-            if (visualRoot != null)
-            {
-                Gizmos.color = debugCursorColor;
-                Gizmos.DrawWireSphere(visualRoot.position, debugSnapshotSphereRadius * 1.2f);
-                Gizmos.DrawRay(visualRoot.position, visualRoot.forward * 0.5f);
-            }
-        }
-#endif
     }
 }

@@ -1,8 +1,8 @@
 using FishNet.Connection;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
+using KINEMATION.CharacterAnimationSystem.Scripts.Runtime.Core;
 using RoachRace.Controls;
-using RoachRace.Data;
 using RoachRace.Interaction;
 using RoachRace.UI.Models;
 using UnityEngine;
@@ -22,7 +22,7 @@ namespace RoachRace.Networking.Inventory
     /// Scene/Prefab setup:<br/>
     /// - Add this to the same GameObject as the player's NetworkObject (and typically FishnetPlayerControllerOverride).<br/>
     /// - Ensure a PlayerItemRegistry exists on the player hierarchy (items are local child GameObjects).<br/>
-    /// - Each child item should have an ItemInstance + RoachRaceItemComponent (e.g. HealItem/KeycardItem/CasPropItemAdapter).<br/>
+    /// - Each child item should have an ItemInstance + IRoachRaceItem (e.g. HealItem/KeycardItem/CasPropItemAdapter).<br/>
     /// - Assign an ItemDatabase (ScriptableObject) so UI can resolve itemId -> icon/flags.<br/>
     /// - Assign an InventoryModel (ScriptableObject) for local HUD rendering (required).<br/>
     /// <br/>
@@ -36,12 +36,11 @@ namespace RoachRace.Networking.Inventory
         [Header("Config")]
         [Tooltip("Number of inventory slots supported for this character. Survivors typically use 8, ghosts 6, monsters can use 8 (4 left + 4 right UI).")]
         [SerializeField, Range(1, 9)] private int slotCount = 9;
-        [Tooltip("If true, the server will auto-select a newly picked up item when the current selected slot is empty.")]
-        [SerializeField] private bool autoSelectOnPickup = true;
 
         [Header("Initial Items")]
         [Tooltip("Optional. Items granted by the server when this player spawns. Use this for reusable default loadouts. Note: item child objects are hidden unless their itemId exists in inventory slots and that slot is selected.")]
         [SerializeField] private InventoryLoadout initialLoadout;
+        [SerializeField] private CharacterAnimationComponent _characterAnimationComponent;
 
         [Tooltip("If false (recommended), ItemDatabase and InventoryModel will be auto-assigned from InventoryGlobals. Enable only when you need per-prefab overrides.")]
         [SerializeField, HideInInspector] private bool overrideGlobalInventoryReferences;
@@ -58,11 +57,14 @@ namespace RoachRace.Networking.Inventory
         [Tooltip("Server-authoritative slot list. Do not modify on clients.")]
         public readonly SyncList<InventorySlotState> Slots = new();
         private readonly SyncVar<int> _selectedSlotIndex = new(0);
+        private readonly SyncVar<bool> _inventoryReady = new(false);
 
         public int SlotCount => slotCount;
         public int SelectedSlotIndex => _selectedSlotIndex.Value;
+        public bool InventoryReady => _inventoryReady.Value;
 
         private bool _uiModelDirty;
+        private bool _characterAnimationInitialized = false;
 
         /// <summary>
         /// Server-only helper to report an item use failure to the owning client.<br/>
@@ -226,6 +228,9 @@ namespace RoachRace.Networking.Inventory
             _selectedSlotIndex.Value = 0;
 
             ApplyInitialItemsServer();
+
+            // Mark readiness only after slots are initialized and the server has applied the initial loadout.
+            _inventoryReady.Value = true;
         }
 
         /// <summary>
@@ -282,6 +287,9 @@ namespace RoachRace.Networking.Inventory
         {
             base.OnStartClient();
             _selectedSlotIndex.OnChange += OnSelectedSlotChanged;
+
+            _inventoryReady.OnChange += OnInventoryReadyChanged;
+            TryInitializeCharacterAnimationIfReady();
         }
 
         /// <summary>
@@ -337,7 +345,25 @@ namespace RoachRace.Networking.Inventory
             base.OnStopClient();
             _selectedSlotIndex.OnChange -= OnSelectedSlotChanged;
 
+            _inventoryReady.OnChange -= OnInventoryReadyChanged;
+
             Slots.OnChange -= OnSlotsChanged;
+        }
+
+        private void OnInventoryReadyChanged(bool prev, bool next, bool asServer)
+        {
+            if (asServer) return;
+            if (!next) return;
+            TryInitializeCharacterAnimationIfReady();
+        }
+
+        private void TryInitializeCharacterAnimationIfReady()
+        {
+            if (!IsClientInitialized) return;
+            if (!_inventoryReady.Value) return;
+            if (_characterAnimationInitialized) return;
+            if(TryGetComponent(out SurvivorRemoteAnimator animator))
+                animator.UpdateActiveItem();
         }
 
         /// <summary>
@@ -405,6 +431,64 @@ namespace RoachRace.Networking.Inventory
         {
             if (slotIndex < 0 || slotIndex >= Slots.Count) return default;
             return Slots[slotIndex];
+        }
+
+        /// <summary>
+        /// Attempts to resolve the item component for the currently selected slot.
+        /// </summary>
+        /// <remarks>
+        /// This is a convenience helper for gameplay code which wants the currently "equipped" item implementation.
+        /// Returns <c>false</c> when the selected slot is empty, out of range, or the item has no registered implementation.
+        /// </remarks>
+        public bool TryGetSelectedItem(out IRoachRaceItem item)
+        {
+            return TryGetSelectedItem(out _, out item);
+        }
+
+        /// <summary>
+        /// Attempts to resolve the item component for the currently selected slot and also returns the slot state.
+        /// </summary>
+        public bool TryGetSelectedItem(out InventorySlotState slotState, out IRoachRaceItem item)
+        {
+            item = null;
+            slotState = GetSlot(_selectedSlotIndex.Value);
+            if (slotState.IsEmpty) return false;
+            if (itemRegistry == null) return false;
+            return itemRegistry.TryGetItem(slotState.ItemId, out item);
+        }
+
+        /// <summary>
+        /// Attempts to resolve the <see cref="ItemInstance"/> for the currently selected slot.
+        /// </summary>
+        /// <remarks>
+        /// Use this when you need the definition binding (id/definition) alongside the concrete item component.
+        /// Returns <c>false</c> when the selected slot is empty, out of range, or the instance is not registered.
+        /// </remarks>
+        public bool TryGetSelectedItemInstance(out ItemInstance instance)
+        {
+            return TryGetSelectedItemInstance(out _, out instance);
+        }
+
+        /// <summary>
+        /// Attempts to resolve the <see cref="ItemInstance"/> for the currently selected slot and also returns the slot state.
+        /// </summary>
+        public bool TryGetSelectedItemInstance(out InventorySlotState slotState, out ItemInstance instance)
+        {
+            instance = null;
+
+            if (!TryGetSelectedItem(out slotState, out var item) || item == null) {
+                Debug.LogError($"[{nameof(NetworkPlayerInventory)}] Failed to get selected item for slot index {_selectedSlotIndex.Value} on '{gameObject.name}'. Slot state: {slotState}.", gameObject);
+                return false;
+            }
+
+            // ItemInstance is expected to live on the same GameObject as the item component.
+            instance = item.GetItemInstance();
+
+            if(instance == null) {
+                Debug.LogError($"[{nameof(NetworkPlayerInventory)}] Selected item component '{item.GetType().Name}' on '{gameObject.name}' returned null ItemInstance.", gameObject);
+                return false;
+            }
+            return true;
         }
 
         /// <summary>
@@ -670,7 +754,7 @@ namespace RoachRace.Networking.Inventory
                 ReportUseFailed(itemId, slotIndex, ItemUseFailReason.MissingItemComponent);
                 return false;
             }
-            if (!itemRegistry.TryGetItem(itemId, out RoachRaceItemComponent item))
+            if (!itemRegistry.TryGetItem(itemId, out IRoachRaceItem item))
             {
                 ReportUseFailed(itemId, slotIndex, ItemUseFailReason.MissingItemComponent);
                 return false;
@@ -750,11 +834,7 @@ namespace RoachRace.Networking.Inventory
                     s.Count = (byte)(s.Count + toAdd);
                     Slots[i] = s;
                     amount -= (byte)toAdd;
-                    if (amount == 0)
-                    {
-                        AutoSelectIfNeeded(i);
-                        return true;
-                    }
+                    if (amount == 0) return true;
                 }
             }
 
@@ -764,7 +844,7 @@ namespace RoachRace.Networking.Inventory
                 var s = Slots[i];
                 if (!s.IsEmpty) continue;
 
-                byte put = amount;
+                byte put;
                 if (TryGetDefinition(itemId, out var def2) && def2.stackable)
                 {
                     int maxStack = Mathf.Max(1, def2.maxStack);
@@ -777,8 +857,6 @@ namespace RoachRace.Networking.Inventory
 
                 Slots[i] = new InventorySlotState { ItemId = itemId, Count = put };
                 amount -= put;
-
-                AutoSelectIfNeeded(i);
             }
 
             return true;
@@ -956,7 +1034,7 @@ namespace RoachRace.Networking.Inventory
                 ReportUseFailed(slot.ItemId, idx, ItemUseFailReason.MissingItemComponent);
                 return false;
             }
-            if (!itemRegistry.TryGetItem(slot.ItemId, out RoachRaceItemComponent item))
+            if (!itemRegistry.TryGetItem(slot.ItemId, out IRoachRaceItem item))
             {
                 ReportUseFailed(slot.ItemId, idx, ItemUseFailReason.MissingItemComponent);
                 return false;
@@ -1006,22 +1084,6 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
-    /// Server-only helper to auto-select a slot after adding items, when configured.<br/>
-    ///<br/>
-    /// Typical behavior:<br/>
-    /// - If <see cref="autoSelectOnPickup"/> is true and the current selection is empty, selects <paramref name="slotIndex"/> and may auto-use depending on item rules.<br/>
-        /// </summary>
-        private void AutoSelectIfNeeded(int slotIndex)
-        {
-            if (!autoSelectOnPickup) return;
-
-            // If current selection is empty, select newly added slot.
-            int current = _selectedSlotIndex.Value;
-            if (current < 0 || current >= Slots.Count || Slots[current].IsEmpty)
-                ServerSelectSlot(slotIndex, useOnSelect: true);
-        }
-
-        /// <summary>
         /// Applies local item visibility (equip/unequip) to match the specified slot index.<br/>
         ///<br/>
         /// Typical behavior:<br/>
@@ -1049,10 +1111,10 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
-    /// Server-to-observers RPC that applies selection visuals on observing clients.<br/>
-    ///<br/>
-    /// Typical behavior:<br/>
-    /// - Mirrors server selection visuals on non-server clients (server excluded).<br/>
+        /// Server-to-observers RPC that applies selection visuals on observing clients.<br/>
+        ///<br/>
+        /// Typical behavior:<br/>
+        /// - Mirrors server selection visuals on non-server clients (server excluded).<br/>
         /// </summary>
         [ObserversRpc(ExcludeServer = true)]
         private void SetSelectionVisualsObserversRpc(int slotIndex)
