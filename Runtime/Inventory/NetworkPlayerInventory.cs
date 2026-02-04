@@ -380,8 +380,9 @@ namespace RoachRace.Networking.Inventory
         {
             ApplySelectionVisuals(next);
 
-            if (IsOwner)
-                _uiModelDirty = true;
+            if (IsOwner) _uiModelDirty = true;
+            if(TryGetComponent(out SurvivorRemoteAnimator animator))
+                animator.UpdateActiveItem();
         }
 
         /// <summary>
@@ -396,7 +397,7 @@ namespace RoachRace.Networking.Inventory
         private void OnSlotsChanged(SyncListOperation op, int index, InventorySlotState oldItem, InventorySlotState newItem, bool asServer)
         {
             if (!IsOwner) return;
-            _uiModelDirty = true;
+                _uiModelDirty = true;   
         }
 
         /// <summary>
