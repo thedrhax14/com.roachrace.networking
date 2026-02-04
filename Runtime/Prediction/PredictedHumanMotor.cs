@@ -252,7 +252,7 @@ namespace RoachRace.Networking
         {
             _groundColliderIds.Clear();
         }
-
+#if UNITY_EDITOR
         private void OnDrawGizmosSelected()
         {
             if (!drawGroundCheckGizmos)
@@ -295,6 +295,7 @@ namespace RoachRace.Networking
             Gizmos.DrawWireSphere(bottom, radius);
             Gizmos.DrawLine(bottom, bottom + Vector3.up * 0.25f);
         }
+#endif
 
         public override void CreateReconcile()
         {
