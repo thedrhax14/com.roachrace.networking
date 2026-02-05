@@ -9,7 +9,7 @@ namespace RoachRace.Networking
 {
     [DisallowMultipleComponent]
     [RequireComponent(typeof(Rigidbody))]
-    public class ClientAuthoritativeDroneMotor : NetworkBehaviour
+    public class ClientAuthoritativeDroneMotor : ServerAuthMonsterController
     {
         [System.Serializable]
         public struct DroneInputData
@@ -39,13 +39,13 @@ namespace RoachRace.Networking
 
         private float verticalInput = 0f;
 
-        private Rigidbody rb;
         private Camera cam;
 
-        private void Awake()
+        protected override void Awake()
         {
+            base.Awake();
             cam = Camera.main;
-            if (!TryGetComponent(out rb) || rb == null)
+            if (!TryGetComponent(out _rb) || _rb == null)
             {
                 Debug.LogError($"[{nameof(ClientAuthoritativeDroneMotor)}] Rigidbody is not assigned and was not found! Please add a Rigidbody component.", gameObject);
                 throw new System.NullReferenceException($"[{nameof(ClientAuthoritativeDroneMotor)}] Rigidbody is null on GameObject '{gameObject.name}'.");
@@ -65,8 +65,8 @@ namespace RoachRace.Networking
 
             // Non-owners should not simulate physics locally.
             // Owner simulates locally and NetworkTransform (client-authoritative) replicates to server/others.
-            if (rb != null)
-                rb.isKinematic = !IsOwner;
+            if (_rb != null)
+                _rb.isKinematic = !IsOwner;
         }
 
         public override void OnStartServer()
@@ -74,8 +74,8 @@ namespace RoachRace.Networking
             base.OnStartServer();
 
             // Client authoritative: server does not simulate this body.
-            if (rb != null)
-                rb.isKinematic = true;
+            if (_rb != null)
+                _rb.isKinematic = true;
         }
 
         public override void OnOwnershipClient(NetworkConnection prevOwner)
@@ -107,7 +107,7 @@ namespace RoachRace.Networking
             }
         }
 
-        private void FixedUpdate()
+        protected override void OnOwnerClientTick()
         {
             if (!IsClientInitialized || !IsOwner)
                 return;
@@ -148,7 +148,7 @@ namespace RoachRace.Networking
 
         private void ApplyMovement(DroneInputData input, float dt)
         {
-            Vector3 velocity = rb.linearVelocity;
+            Vector3 velocity = _rb.linearVelocity;
 
             // Planar movement (based on camera yaw).
             Vector3 wishPlanarDir = Vector3.zero;
@@ -166,7 +166,7 @@ namespace RoachRace.Networking
             {
                 Vector3 force = wishPlanarDir * maxSpeed - velocity;
                 force = Vector3.ClampMagnitude(force, acceleration * dt);
-                rb.AddForce(force, movementForceMode);
+                _rb.AddForce(force, movementForceMode);
             }
         }
 
@@ -199,7 +199,7 @@ namespace RoachRace.Networking
             float yawT = 1f - Mathf.Exp(-yawAlignSpeed * dt);
             float tiltT = 1f - Mathf.Exp(-tiltAlignSpeed * dt);
 
-            Quaternion current = rb.rotation;
+            Quaternion current = _rb.rotation;
             Quaternion yawOnly = Quaternion.Euler(0f, yaw, 0f);
             Quaternion yawBlended = Quaternion.Slerp(Quaternion.Euler(0f, current.eulerAngles.y, 0f), yawOnly, yawT);
 
@@ -207,7 +207,7 @@ namespace RoachRace.Networking
             Quaternion desired = yawBlended * tiltRot;
             Quaternion newRotation = Quaternion.Slerp(current, desired, tiltT);
 
-            rb.MoveRotation(newRotation);
+            _rb.MoveRotation(newRotation);
         }
 
         void OnDestroy()
