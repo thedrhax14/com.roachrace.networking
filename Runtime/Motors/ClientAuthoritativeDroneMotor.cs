@@ -18,8 +18,6 @@ namespace RoachRace.Networking
         [Header("Movement")]
         [SerializeField] private float maxSpeed = 8f;
         [SerializeField] private float acceleration = 20f;
-        [Tooltip("Extra stop force applied ONLY when there is no input. Use this to make 'stick released = stop quickly' without increasing Rigidbody drag/damping (which also slows movement while input is held).")]
-        [SerializeField] private float brake = 8f;
 
         [Header("Rotation")]
         [SerializeField] private float maxTiltAngle = 35f;
@@ -111,12 +109,6 @@ namespace RoachRace.Networking
                 Vector3 velocityChange = targetHorizontalVel - horizontalVel;
                 velocityChange = Vector3.ClampMagnitude(velocityChange, acceleration * dt);
                 rb.AddForce(new Vector3(velocityChange.x, 0f, velocityChange.z), ForceMode.VelocityChange);
-            }
-            else
-            {
-                // No input: brake towards a stop.
-                Vector3 brakeAccel = -horizontalVel * brake;
-                rb.AddForce(new Vector3(brakeAccel.x, 0f, brakeAccel.z), ForceMode.Acceleration);
             }
         }
 
