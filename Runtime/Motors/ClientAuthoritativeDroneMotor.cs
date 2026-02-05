@@ -21,10 +21,9 @@ namespace RoachRace.Networking
         }
 
         [Header("Movement")]
+        [SerializeField] private ForceMode movementForceMode = ForceMode.Acceleration;
         [SerializeField] private float maxSpeed = 8f;
         [SerializeField] private float acceleration = 20f;
-        [SerializeField] private float maxVerticalSpeed = 4f;
-        [SerializeField] private float verticalAcceleration = 14f;
         [SerializeField] private InputActionReference altitudeInput;
 
         [Header("Rotation")]
@@ -153,31 +152,22 @@ namespace RoachRace.Networking
 
             // Planar movement (based on camera yaw).
             Vector3 wishPlanarDir = Vector3.zero;
-            if (input.Input.sqrMagnitude > 0.0001f)
+            if (input.Input.sqrMagnitude > 0.0001f || input.VerticalInput != 0f)
             {
                 Quaternion yawRot = Quaternion.Euler(0f, input.CameraYaw, 0f);
                 Vector3 forward = yawRot * Vector3.forward;
                 Vector3 right = yawRot * Vector3.right;
-                wishPlanarDir = forward * input.Input.y + right * input.Input.x;
+                wishPlanarDir = forward * input.Input.y + right * input.Input.x + Vector3.up * input.VerticalInput;
                 if (wishPlanarDir.sqrMagnitude > 0.0001f)
                     wishPlanarDir.Normalize();
             }
 
-            Vector3 horizontalVel = new(velocity.x, 0f, velocity.z);
             if (wishPlanarDir.sqrMagnitude > 0f)
             {
-                Vector3 targetHorizontalVel = wishPlanarDir * maxSpeed;
-                Vector3 velocityChange = targetHorizontalVel - horizontalVel;
-                velocityChange = Vector3.ClampMagnitude(velocityChange, acceleration * dt);
-                rb.AddForce(new Vector3(velocityChange.x, 0f, velocityChange.z), ForceMode.VelocityChange);
+                Vector3 force = wishPlanarDir * maxSpeed - velocity;
+                force = Vector3.ClampMagnitude(force, acceleration * dt);
+                rb.AddForce(force, movementForceMode);
             }
-
-            // Vertical movement (ascend/descend).
-            float desiredYVel = Mathf.Clamp(input.VerticalInput, -1f, 1f) * maxVerticalSpeed;
-            float deltaYVel = desiredYVel - velocity.y;
-            float maxDeltaY = verticalAcceleration * dt;
-            deltaYVel = Mathf.Clamp(deltaYVel, -maxDeltaY, maxDeltaY);
-            rb.AddForce(new Vector3(0f, deltaYVel, 0f), ForceMode.VelocityChange);
         }
 
         private void ApplyVisualRotation(DroneInputData input, float dt)
