@@ -26,9 +26,15 @@ namespace RoachRace.Networking
                 return;
 
             if (IsOwner)
+            {
                 LocalPlayerControllerContext.Set(gameObject);
+                cameraController.enabled = true;
+            } 
             else
+            {
                 LocalPlayerControllerContext.ClearIf(gameObject);
+                cameraController.enabled = false;
+            }
         }
 
         public override void OnStartClient()

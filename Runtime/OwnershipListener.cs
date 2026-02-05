@@ -6,24 +6,15 @@ namespace RoachRace.Networking
 {
     public class OwnershipListener : NetworkBehaviour
     {
-        public UnityEvent OnGainedOwnership;
-        public UnityEvent OnLostOwnership;
-
-        bool wasOwner = false;
+        public UnityEvent OnGainedOwnership = new ();
+        public UnityEvent OnOwnedByLiveConnection = new ();
 
         public override void OnOwnershipClient(NetworkConnection prevOwner)
         {
             base.OnOwnershipClient(prevOwner);
-            if (IsOwner)
-            {
-                OnGainedOwnership.Invoke();
-                wasOwner = true;
-            }
-            else if(wasOwner)
-            {
-                OnLostOwnership.Invoke();
-                wasOwner = false;
-            }
+            if (Owner != null && Owner.ClientId != -1)
+                OnOwnedByLiveConnection.Invoke();
+            if(IsOwner) OnGainedOwnership.Invoke();
         }
     }
 }

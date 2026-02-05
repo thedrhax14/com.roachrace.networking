@@ -29,20 +29,6 @@ namespace RoachRace.Networking
 
         private readonly SyncVar<string> imageUrl = new("");
         private Player _playerData;
-        Transform mainCamera;
-
-        void Awake()
-        {
-            mainCamera = Camera.main.transform;
-        }
-
-        void Update()
-        {
-            if(IsClientInitialized && IsOwner)
-            {
-                transform.SetPositionAndRotation(mainCamera.position, mainCamera.rotation);
-            }
-        }
 
         #region NetworkBehaviour Lifecycle
 
@@ -86,7 +72,6 @@ namespace RoachRace.Networking
             if (IsOwner)
             {
                 InitializeLocalPlayer();
-
             }
         }
 

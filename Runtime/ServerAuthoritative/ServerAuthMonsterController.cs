@@ -42,6 +42,7 @@ namespace RoachRace.Networking
             Debug.Log($"[{nameof(ServerAuthMonsterController)}] OnOwnershipServer called. Previous OwnerId: {prevOwner?.ClientId}, New OwnerId: {OwnerId}", gameObject);
             if(prevOwner.ClientId != -1)
             {
+                _originalGhostController.transform.SetPositionAndRotation(Camera.main.transform.position, Camera.main.transform.rotation);
                 _originalGhostController.GiveOwnership(prevOwner);
                 GiveOwnership(null);
             }
