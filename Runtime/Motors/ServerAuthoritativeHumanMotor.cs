@@ -150,8 +150,7 @@ namespace RoachRace.Networking
                 // Send input to server each tick.
                 SendInputServerRpc(move, _bodyYaw, jump);
 
-                survivorRemoteAnimator.SetPitch(view.Pitch);
-                survivorRemoteAnimator.SetYaw(view.Yaw);
+                survivorRemoteAnimator.SetPitchAndYaw(view.Pitch, view.Yaw);
             }
 
             if (!IsServerInitialized)

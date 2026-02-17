@@ -148,8 +148,7 @@ namespace RoachRace.Networking
             Vector3 planarAccel = motor.ComputePlanarAcceleration(move, yaw, currentVel, isGrounded, _dt);
             rb.AddForce(planarAccel, ForceMode.Acceleration);
 
-            survivorRemoteAnimator.SetPitch(view.Pitch);
-            survivorRemoteAnimator.SetYaw(view.Yaw);
+            survivorRemoteAnimator.SetPitchAndYaw(view.Pitch, view.Yaw);
         }
 
         private void OnCollisionStay(Collision collision)

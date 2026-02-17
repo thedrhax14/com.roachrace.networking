@@ -92,7 +92,7 @@ namespace RoachRace.Networking
         protected Vector2 _moveInput = new ();
         public Vector2 MoveInput => _moveInput;
         protected readonly SyncVar<Vector2> _targetLookInput = new (Vector2.zero);
-        protected Vector2 _lookInput = Vector2.zero;
+        public Vector2 _lookInput = Vector2.zero;
         public Vector2 LookInput => _lookInput;
         protected NetworkPlayerInventory inventory;
 
@@ -130,26 +130,15 @@ namespace RoachRace.Networking
             }
         }
 
-        public void SetPitch(float pitchInput)
+        public void SetPitchAndYaw(float pitchInput, float yawInput)
         {
-            SetPitchRPC(pitchInput);
+            SetPitchAndYawRPC(pitchInput, yawInput);
         }
 
         [ServerRpc]
-        void SetPitchRPC(float pitchInput)
+        void SetPitchAndYawRPC(float pitchInput, float yawInput)
         {
-            _targetLookInput.Value = new Vector2(pitchInput, _lookInput.y);
-        }
-
-        public void SetYaw(float yawInput)
-        {
-            SetYawRPC(yawInput);
-        }
-
-        [ServerRpc]
-        void SetYawRPC(float yawInput)
-        {
-            _targetLookInput.Value = new Vector2(_lookInput.x, yawInput);
+            _targetLookInput.Value = new Vector2(pitchInput, yawInput);
         }
 
         public RoachRaceItemComponent GetActiveItem()

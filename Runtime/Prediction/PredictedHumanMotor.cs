@@ -156,8 +156,7 @@ namespace RoachRace.Networking
             PerformReplicate(BuildMoveData());
             if (IsOwner)
             {
-                survivorRemoteAnimator.SetPitch(view.Pitch);
-                survivorRemoteAnimator.SetYaw(view.Yaw);
+                survivorRemoteAnimator.SetPitchAndYaw(view.Pitch, view.Yaw);
             }
             CreateReconcile();
         }
