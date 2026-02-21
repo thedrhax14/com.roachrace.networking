@@ -22,7 +22,7 @@ namespace RoachRace.Networking.Inventory
     /// Scene/Prefab setup:<br/>
     /// - Add this to the same GameObject as the player's NetworkObject (and typically FishnetPlayerControllerOverride).<br/>
     /// - Ensure a PlayerItemRegistry exists on the player hierarchy (items are local child GameObjects).<br/>
-    /// - Each child item should have an ItemInstance + IRoachRaceItem (e.g. HealItem/KeycardItem/CasPropItemAdapter).<br/>
+    /// - Each child item should have an ItemInstance + IRoachRaceItem (e.g. HealItem/KeycardItem/CasPropItemAdapter/WeaponPropItemAdapter).<br/>
     /// - Assign an ItemDatabase (ScriptableObject) so UI can resolve itemId -> icon/flags.<br/>
     /// - Assign an InventoryModel (ScriptableObject) for local HUD rendering (required).<br/>
     /// <br/>
