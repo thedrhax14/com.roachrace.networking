@@ -1,5 +1,6 @@
 using FishNet.Object;
 using RoachRace.Data;
+using RoachRace.Networking.Extensions;
 using UnityEngine;
 
 namespace RoachRace.Networking.Combat
@@ -110,15 +111,12 @@ namespace RoachRace.Networking.Combat
             {
                 if (selfHealth.IsAlive && selfDamage > 0)
                 {
-                    var selfDamageInfo = new DamageInfo
-                    {
-                        Amount = selfDamage,
-                        Type = type,
-                        Point = contact.point,
-                        Normal = contact.normal,
-                        InstigatorId = GetInstigatorId(collision.gameObject),
-                        Source = default
-                    };
+                    var selfDamageInfo = GetComponent<NetworkObject>().CreateDamageInfo(
+                        amount: selfDamage,
+                        type: type,
+                        point: contact.point,
+                        normal: contact.normal
+                    );
                     
                     selfHealth.TryConsume(selfDamageInfo);
                 }
@@ -129,15 +127,12 @@ namespace RoachRace.Networking.Combat
             {
                 if (otherHealth.IsAlive && otherDamage > 0)
                 {
-                    var otherDamageInfo = new DamageInfo
-                    {
-                        Amount = otherDamage,
-                        Type = type,
-                        Point = contact.point,
-                        Normal = -contact.normal,
-                        InstigatorId = GetInstigatorId(gameObject),
-                        Source = default
-                    };
+                    var otherDamageInfo = collision.gameObject.GetComponent<NetworkObject>().CreateDamageInfo(
+                        amount: otherDamage,
+                        type: type,
+                        point: contact.point,
+                        normal: -contact.normal
+                    );
                     
                     otherHealth.TryConsume(otherDamageInfo);
                 }
@@ -152,7 +147,7 @@ namespace RoachRace.Networking.Combat
         {
             if (obj.TryGetComponent<NetworkObject>(out var networkObject))
             {
-                return networkObject.ObjectId;
+                return networkObject.OwnerId;
             }
             return -1;
         }

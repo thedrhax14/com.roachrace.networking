@@ -1,5 +1,6 @@
 using FishNet.Object;
 using RoachRace.Data;
+using RoachRace.Networking.Extensions;
 using UnityEngine;
 
 namespace RoachRace.Networking.Combat
@@ -81,7 +82,7 @@ namespace RoachRace.Networking.Combat
             if (!health.IsAlive)
                 return;
 
-            health.TryConsume(new DamageInfo
+            var damageInfo = new DamageInfo
             {
                 Amount = amount,
                 Type = type,
@@ -89,13 +90,19 @@ namespace RoachRace.Networking.Combat
                 Normal = normal,
                 InstigatorId = instigatorId,
                 Source = default
-            });
+            };
+
+            health.TryConsume(damageInfo);
         }
 
+        /// <summary>
+        /// Attempts to get the owner connection ID from the NetworkObject on the GameObject.
+        /// Returns -1 if no NetworkObject is found (environment/server-owned).
+        /// </summary>
         protected static int GetInstigatorId(GameObject obj)
         {
             return obj.TryGetComponent(out NetworkObject netObj)
-                ? netObj.ObjectId
+                ? netObj.OwnerId
                 : -1;
         }
     }

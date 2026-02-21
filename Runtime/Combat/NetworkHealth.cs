@@ -1,8 +1,12 @@
 using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using FishNet;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
 using RoachRace.Controls;
 using RoachRace.Data;
+using RoachRace.UI.Models;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.Serialization;
@@ -30,6 +34,11 @@ namespace RoachRace.Networking.Combat
         // Events for UI, Effects, and Logic
         public UnityEvent<DamageInfo> OnDamaged; // Called on Server and Client (via RPC)
         public UnityEvent<int, int> OnHealthChanged; // current, max
+        
+        [Header("Dependencies")]
+        [SerializeField] private DamageEventModel damageEventModel;
+        
+        private string _victimName;
 
         public int CurrentHealth => _currentHealth.Value;
         public int MaxHealth => _maxHealth.Value;
@@ -57,6 +66,9 @@ namespace RoachRace.Networking.Combat
             base.OnStartServer();
 
             int max = Mathf.Max(1, initialMaxHealth);
+            
+            // Cache victim name for damage events
+            _victimName = gameObject.name;
             _maxHealth.Value = max;
             _currentHealth.Value = max;
 
@@ -107,7 +119,10 @@ namespace RoachRace.Networking.Combat
             {
                 _currentHealth.Value = newHealth;
                 
-                // 1. Notify clients about the hit (for particles/sounds)
+                // 1. Publish damage event for UI visualization (damage popups, etc)
+                PublishDamageEvent(damageInfo, newHealth <= 0, newHealth);
+                
+                // 2. Notify clients about the hit (for particles/sounds)
                 RpcOnHit(damageInfo);
 
                 if (newHealth <= 0)
@@ -119,6 +134,28 @@ namespace RoachRace.Networking.Combat
                     OnDamaged?.Invoke(damageInfo);
                 }
             }
+        }
+
+        [Server]
+        private void PublishDamageEvent(DamageInfo damageInfo, bool isFatal, int remainingHealth)
+        {
+            if (damageEventModel == null)
+            {
+                Debug.LogWarning($"[{nameof(NetworkHealth)}] DamageEventModel is not assigned on '{gameObject.name}'. Damage events will not be published.");
+                return;
+            }
+
+            var damageEvent = new DamageEventData
+            {
+                DamageInfo = damageInfo,
+                VictimName = _victimName,
+                DamagePosition = transform.position,
+                IsFatal = isFatal,
+                VictimRemainingHealth = remainingHealth,
+                EventTime = Time.time
+            };
+
+            damageEventModel.PublishDamageEvent(damageEvent);
         }
 
         [Server]
@@ -166,6 +203,23 @@ namespace RoachRace.Networking.Combat
         }
 
 #if UNITY_EDITOR
+        private int GetLocalPlayerObjectId()
+        {
+            var networkManager = InstanceFinder.NetworkManager;
+            if (networkManager != null && networkManager.ClientManager != null && networkManager.ClientManager.Connection != null)
+            {
+                HashSet<NetworkObject> ownedObjects = networkManager.ClientManager.Connection.Objects;
+                if (ownedObjects != null && ownedObjects.Count > 0)
+                {
+                    // Return the first owned object's ID (typically the player)
+                    return ownedObjects.First().ObjectId;
+                }
+            }
+
+            // Fallback: return -1 if no owned objects found
+            return -1;
+        }
+
         public void EditorTriggerDeath()
         {
             if (!Application.isPlaying)
@@ -184,13 +238,15 @@ namespace RoachRace.Networking.Combat
                 return;
 
             int amount = Mathf.Max(1, _currentHealth.Value);
+            int localPlayerId = GetLocalPlayerObjectId();
+            
             var info = new DamageInfo
             {
                 Amount = amount,
                 Type = DamageType.Environment,
                 Point = transform.position,
                 Normal = Vector3.up,
-                InstigatorId = -1,
+                InstigatorId = localPlayerId,
                 Source = new DamageSource
                 {
                     AttackerName = "Editor",

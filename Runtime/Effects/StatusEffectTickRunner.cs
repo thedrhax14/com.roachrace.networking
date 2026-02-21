@@ -43,6 +43,7 @@ namespace RoachRace.Networking.Effects
             public int HandleId;
             public StatusEffectDefinition Definition;
             public int Stacks;
+            public int InstigatorId;
 
             public uint StartTick;
             public uint EndTick;
@@ -129,7 +130,10 @@ namespace RoachRace.Networking.Effects
         /// <summary>
         /// Server-only: adds an effect and returns a handle id. Returns -1 if not added.
         /// </summary>
-        public int AddEffect(StatusEffectDefinition definition, int stacks = 1)
+        /// <param name="definition">The effect definition to add</param>
+        /// <param name="stacks">Number of stacks to apply</param>
+        /// <param name="instigatorId">NetworkObjectId of the player/entity that caused this effect. Default -1 for environmental effects.</param>
+        public int AddEffect(StatusEffectDefinition definition, int stacks = 1, int instigatorId = -1)
         {
             if (definition == null) {
                 Debug.LogError($"[{nameof(StatusEffectTickRunner)}] Cannot add effect because definition is null.", gameObject);
@@ -204,6 +208,7 @@ namespace RoachRace.Networking.Effects
                 HandleId = _nextHandleId++,
                 Definition = definition,
                 Stacks = stacks,
+                InstigatorId = instigatorId,
                 StartTick = nowTick,
                 EndTick = GetEndTick(definition, nowTick),
                 IntervalTicks = intervalTicks,
@@ -297,10 +302,10 @@ namespace RoachRace.Networking.Effects
             if (def == null) return;
 
             float delta = def.DeltaPerTick * Mathf.Max(1, effect.Stacks);
-            ApplyDelta(def, delta);
+            ApplyDelta(def, delta, effect.InstigatorId);
         }
 
-        private void ApplyDelta(StatusEffectDefinition def, float delta)
+        private void ApplyDelta(StatusEffectDefinition def, float delta, int instigatorId = -1)
         {
             if (def == null) return;
             if (Mathf.Abs(delta) <= 0.0001f) return;
@@ -323,7 +328,7 @@ namespace RoachRace.Networking.Effects
             // Health special-case: NetworkHealth has int HP and proper death flow.
             if (resource is NetworkHealth health)
             {
-                ApplyToNetworkHealth(def, health, delta);
+                ApplyToNetworkHealth(def, health, delta, instigatorId);
                 return;
             }
 
@@ -340,7 +345,7 @@ namespace RoachRace.Networking.Effects
             }
         }
 
-        private void ApplyToNetworkHealth(StatusEffectDefinition def, NetworkHealth health, float delta)
+        private void ApplyToNetworkHealth(StatusEffectDefinition def, NetworkHealth health, float delta, int instigatorId = -1)
         {
             if (health == null) return;
             if (!health.IsServerInitialized) return;
@@ -363,7 +368,7 @@ namespace RoachRace.Networking.Effects
                     Type = def.HealthDamageType,
                     Point = transform.position,
                     Normal = Vector3.up,
-                    InstigatorId = -1,
+                    InstigatorId = instigatorId,
                     Source = new DamageSource
                     {
                         AttackerName = def.name,
