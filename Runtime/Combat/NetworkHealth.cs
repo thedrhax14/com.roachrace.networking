@@ -141,7 +141,8 @@ namespace RoachRace.Networking.Combat
         {
             if (damageEventModel == null)
             {
-                Debug.LogWarning($"[{nameof(NetworkHealth)}] DamageEventModel is not assigned on '{gameObject.name}'. Damage events will not be published.");
+                Debug.LogWarning($"[{nameof(NetworkHealth)}] DamageEventModel is not assigned on '{gameObject.name}'. Damage events will not be published.", gameObject);
+                Debug.Log($"[{nameof(NetworkHealth)}] DamageInfo: Amount={damageInfo.Amount}, Type={damageInfo.Type}, InstigatorId={damageInfo.InstigatorId}", gameObject);
                 return;
             }
 

@@ -67,7 +67,7 @@ namespace RoachRace.Networking.Combat
             if (!IsServerInitialized)
                 return;
             Debug.DrawRay(transform.position, collision.impulse, Color.red, 2f);
-            Debug.Log($"[{gameObject.name}] Collision impulse magnitude: {collision.impulse.magnitude}", gameObject);
+            // Debug.Log($"[{gameObject.name}] Collision impulse magnitude: {collision.impulse.magnitude}", gameObject);
             float impulse = collision.impulse.magnitude;
 
             if (impulse < minImpactImpulse)

@@ -5,6 +5,38 @@ using UnityEngine;
 
 namespace RoachRace.Networking.Extensions
 {
+    public static class NetworkExtensions
+    {
+        /// <summary>
+        /// Creates a DamageInfo struct with the connection's client ID as the instigator.
+        /// </summary>
+        /// <param name="conn">The network connection that initiated the damage</param>
+        /// <param name="amount">Amount of damage to deal</param>
+        /// <param name="type">Type of damage</param>
+        /// <param name="point">World position where damage occurred</param>
+        /// <param name="normal">Surface normal at impact point</param>
+        /// <param name="source">Damage source details (attacker name, weapon, etc)</param>
+        /// <returns>A properly initialized DamageInfo struct</returns>
+        public static DamageInfo CreateDamageInfo(
+            int instigatorId,
+            int amount,
+            DamageType type = DamageType.Contact,
+            Vector3 point = default,
+            Vector3 normal = default,
+            DamageSource source = default)
+            {
+                return new DamageInfo
+                {
+                    InstigatorId = instigatorId,
+                    Amount = amount,
+                    Type = type,
+                    Point = point,
+                    Normal = normal,
+                    Source = source
+                };
+            }
+    }
+    
     /// <summary>
     /// Extension methods for NetworkConnection to simplify common operations.
     /// </summary>

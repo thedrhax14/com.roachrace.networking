@@ -5,6 +5,7 @@ using FishNet.Utility.Template;
 using RoachRace.Controls;
 using RoachRace.Data;
 using RoachRace.Networking.Combat;
+using RoachRace.Networking.Extensions;
 using UnityEngine;
 
 namespace RoachRace.Networking.Effects
@@ -362,21 +363,20 @@ namespace RoachRace.Networking.Effects
 
             if (def.UseDamageInfoForHealth)
             {
-                var info = new DamageInfo
-                {
-                    Amount = amount,
-                    Type = def.HealthDamageType,
-                    Point = transform.position,
-                    Normal = Vector3.up,
-                    InstigatorId = instigatorId,
-                    Source = new DamageSource
+                var info = NetworkExtensions.CreateDamageInfo(
+                    instigatorId: instigatorId,
+                    amount: amount,
+                    type: def.HealthDamageType,
+                    point: health.transform.position,
+                    normal: Vector3.up,
+                    source: new DamageSource
                     {
                         AttackerName = def.name,
                         AttackerAvatarUrl = string.Empty,
-                        SourcePosition = transform.position,
+                        SourcePosition = health.transform.position,
                         WeaponIconKey = string.Empty
                     }
-                };
+                );
 
                 health.TryConsume(info);
             }
