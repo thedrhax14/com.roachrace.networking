@@ -8,7 +8,7 @@ namespace RoachRace.Networking.Combat.Movement
     {
         [Header("Torque / Steering")]
         [Tooltip("Strength of the torque applied by noise.")]
-        public float torqueStrength = 5f;
+        public AnimationCurve torqueStrength = AnimationCurve.Linear(0, 5, 1, 0);
 
         [Header("Physics Simulation")]
         [Tooltip("Mass used for editor path simulation.")]
@@ -36,7 +36,7 @@ namespace RoachRace.Networking.Combat.Movement
 
         private void AppyTorqueSteering(Rigidbody rb, float time, float sx, float sy, float sz)
         {
-            if (torqueStrength <= 0.001f) return;
+            if (torqueStrength == null || torqueStrength.length == 0) return;
 
             float tStr = time * noiseFrequency;
             // Noise values [-1, 1]
@@ -45,7 +45,7 @@ namespace RoachRace.Networking.Combat.Movement
             float roll = (Mathf.PerlinNoise(sz, tStr) * 2f) - 1f;
 
             // Apply torque around local X (pitch) and Y (yaw) axes
-            Vector3 torque = new Vector3(pitch, yaw, roll) * torqueStrength;
+            Vector3 torque = new Vector3(pitch, yaw, roll) * torqueStrength.Evaluate(time);
             rb.AddRelativeTorque(torque, forceMode);
             Debug.DrawRay(new Vector3(0, Time.fixedTime % 5f, 0), torque, Color.yellow, 1.0f);
         }
@@ -71,7 +71,7 @@ namespace RoachRace.Networking.Combat.Movement
                 float pitch = (Mathf.PerlinNoise(seedX, tStr) * 2f) - 1f;
                 float yaw = (Mathf.PerlinNoise(seedY, tStr) * 2f) - 1f;
 
-                Vector3 localTorque = new Vector3(pitch, yaw, 0f) * torqueStrength;
+                Vector3 localTorque = new Vector3(pitch, yaw, 0f) * torqueStrength.Evaluate(time);
                 
                 // Physics Integration (Torque -> Angular Vel)
                 Vector3 angularAccel = localTorque / Mathf.Max(0.001f, simulatedMass);
