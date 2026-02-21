@@ -58,6 +58,10 @@ namespace RoachRace.Networking.Input
 
         private void OnDisable()
         {
+            // Safety: if we're disabling while use is held, send stop so hold-to-use items don't get stuck.
+            if (_useWasPressed && IsClientInitialized && IsOwner && _inventory != null)
+                _inventory.TryStopUseSelected();
+
             UnbindActions();
             _useWasPressed = false;
         }
@@ -229,6 +233,12 @@ namespace RoachRace.Networking.Input
                     _inventory.TryUseSelected(cam.transform.position, cam.transform.forward);
                 else
                     _inventory.TryUseSelected(transform.position, transform.forward);
+            }
+
+            // Trigger stop on falling edge.
+            if (!pressed && _useWasPressed)
+            {
+                _inventory.TryStopUseSelected();
             }
 
             _useWasPressed = pressed;

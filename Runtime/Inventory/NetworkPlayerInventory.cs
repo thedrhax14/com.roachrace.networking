@@ -567,6 +567,27 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
+        /// Requests stopping use of the currently selected item.<br/>
+        /// <br/>
+        /// Typical behavior:<br/>
+        /// - If running on the server, stops immediately.<br/>
+        /// - Otherwise, only the local owner can request stop via RPC.<br/>
+        /// <br/>
+        /// Notes:<br/>
+        /// - This is intended for hold-to-use items (e.g., automatic weapons) which need a stop signal on button release.<br/>
+        /// - If the selected slot is invalid/empty or the item component is missing, this will no-op and return <c>false</c>.<br/>
+        /// </summary>
+        public bool TryStopUseSelected()
+        {
+            if (IsServerInitialized)
+                return ServerStopUseSelected();
+
+            if (!IsOwner) return false;
+            StopUseSelectedServerRpc();
+            return true;
+        }
+
+        /// <summary>
         /// Requests using the first available stack/slot matching <paramref name="itemId"/> without aim data.<br/>
         /// <br/>
         /// Typical behavior:<br/>
@@ -678,6 +699,48 @@ namespace RoachRace.Networking.Inventory
         private void UseSelectedWithAimServerRpc(Vector3 origin, Vector3 direction)
         {
             ServerUseSelected(origin, direction);
+        }
+
+        /// <summary>
+        /// Owner-to-server RPC to request stopping the currently selected item's use.
+        /// </summary>
+        [ServerRpc(RequireOwnership = true)]
+        private void StopUseSelectedServerRpc()
+        {
+            ServerStopUseSelected();
+        }
+
+        [Server]
+        private bool ServerStopUseSelected()
+        {
+            int idx = _selectedSlotIndex.Value;
+            if (idx < 0 || idx >= Slots.Count)
+                return false;
+
+            var slot = Slots[idx];
+            if (slot.IsEmpty)
+                return false;
+
+            if (itemRegistry == null)
+                return false;
+
+            if (!itemRegistry.TryGetItem(slot.ItemId, out IRoachRaceItem item) || item == null)
+                return false;
+
+            item.UseStop();
+            StopItemObserversRpc(slot.ItemId);
+            return true;
+        }
+
+        /// <summary>
+        /// Server-to-observers RPC that stops item use on observing clients.
+        /// </summary>
+        [ObserversRpc(ExcludeServer = true)]
+        private void StopItemObserversRpc(ushort itemId)
+        {
+            if (itemRegistry == null) return;
+            if (!itemRegistry.TryGetItem(itemId, out var item) || item == null) return;
+            item.UseStop();
         }
 
         /// <summary>
