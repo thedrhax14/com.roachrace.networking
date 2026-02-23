@@ -162,6 +162,7 @@ namespace RoachRace.Networking
             if (IsOwner) return;
             _characterCamera.pitchInput = next.y;
             _characterCamera.yawInput = next.x;
+            proceduralAnimationFPSData.lookInput = next;
             proceduralAnimationFPSData.deltaLookInput = next - prev;
         }
 
