@@ -1,6 +1,8 @@
+using CAS_Demo.Scripts.FPS;
 using FishNet.Object;
+using FishNet.Object.Synchronizing;
 using KINEMATION.CharacterAnimationSystem.Scripts.Runtime.Camera;
-using RoachRace.Controls;
+using KINEMATION.Shared.KAnimationCore.Runtime.Core;
 using System.Collections.Generic;
 using Unity.Cinemachine;
 using UnityEngine;
@@ -19,10 +21,12 @@ namespace RoachRace.Networking
         [SerializeField] private SurvivorRemoteAnimator survivorRemoteAnimator;
         [SerializeField] private CharacterCamera _characterCamera;
         [SerializeField] private CinemachineCamera virtualCamera;
+        [SerializeField] private ProceduralAnimationFPSData proceduralAnimationFPSData;
 
         [Header("Input")]
         [SerializeField] private InputActionReference moveAction;
         [SerializeField] private InputActionReference jumpAction;
+        [SerializeField] private InputActionReference lookAction;
 
         private Rigidbody rb;
         private CapsuleCollider capsuleCollider;
@@ -35,6 +39,9 @@ namespace RoachRace.Networking
         private int _jumpBufferTicksRemaining;
         private int _coyoteTicksMax;
         private int _jumpBufferTicksMax;
+        private Vector3 _lookInput;
+        private readonly SyncVar<Vector3> _syncLookInput = new (Vector3.zero);
+        private Quaternion _aimRotation = Quaternion.identity;
 
         private readonly HashSet<int> _groundColliderIds = new();
 
@@ -73,11 +80,19 @@ namespace RoachRace.Networking
             else if (IsOwner && rb != null)
                 rb.isKinematic = false;
 
-            if (IsOwner)
-                EnableInput();
+            if (IsOwner) EnableInput();
+            else _syncLookInput.OnChange += SyncLookInput_OnChange;
 
             if (_characterCamera != null) _characterCamera.enabled = IsOwner;
             if (virtualCamera != null) virtualCamera.enabled = IsOwner;
+        }
+
+        public override void OnStopClient()
+        {
+            base.OnStopClient();
+
+            if (!IsOwner)
+                _syncLookInput.OnChange -= SyncLookInput_OnChange;
         }
 
         public override void OnStartServer()
@@ -97,6 +112,10 @@ namespace RoachRace.Networking
             jumpAction.action.performed += JumpAction_Performed;
             jumpAction.action.Enable();
 
+            lookAction.action.performed -= LookAction_Performed;
+            lookAction.action.performed += LookAction_Performed;
+            lookAction.action.Enable();
+
             if (virtualCamera != null)
             {
                 virtualCamera.transform.parent = null;
@@ -110,6 +129,40 @@ namespace RoachRace.Networking
                 return;
 
             _jumpQueued = true;
+        }
+
+        private void LookAction_Performed(InputAction.CallbackContext ctx)
+        {
+            if (!IsOwner || _characterCamera == null)
+                return;
+
+            Vector2 input = ctx.ReadValue<Vector2>();
+            _lookInput.x += input.x;
+            _lookInput.y = Mathf.Clamp(_lookInput.y - input.y, -90f, 90f);
+            _lookInput.z = KMath.FloatInterp(_lookInput.z, 0, 8f, Time.deltaTime);
+            
+            _aimRotation *= Quaternion.Euler(0f, input.x, 0f);
+            _aimRotation.Normalize();
+            
+            _characterCamera.pitchInput = _lookInput.y;
+            _characterCamera.yawInput = _aimRotation.eulerAngles.y;
+            proceduralAnimationFPSData.lookInput = _lookInput;
+            proceduralAnimationFPSData.deltaLookInput = input;
+            SetSyncLookInputRPC(_lookInput);
+        }
+
+        [ServerRpc]
+        private void SetSyncLookInputRPC(Vector3 value)
+        {
+            _syncLookInput.Value = value;
+        }
+
+        private void SyncLookInput_OnChange(Vector3 prev, Vector3 next, bool asServer)
+        {
+            if (IsOwner) return;
+            _characterCamera.pitchInput = next.y;
+            _characterCamera.yawInput = next.x;
+            proceduralAnimationFPSData.deltaLookInput = next - prev;
         }
 
         private bool IsGrounded()
@@ -149,7 +202,8 @@ namespace RoachRace.Networking
             Vector3 planarAccel = motor.ComputePlanarAcceleration(move, yaw, currentVel, isGrounded, _dt);
             rb.AddForce(planarAccel, ForceMode.Acceleration);
 
-            survivorRemoteAnimator.SetPitchAndYaw(_characterCamera.pitchInput, _characterCamera.yawInput);
+            survivorRemoteAnimator.SetPitchAndYaw(_lookInput.x, _lookInput.y);
+            proceduralAnimationFPSData.lookInput = _lookInput;
         }
 
         private void OnCollisionStay(Collision collision)
@@ -184,6 +238,20 @@ namespace RoachRace.Networking
         private void OnDisable()
         {
             _groundColliderIds.Clear();
+        }
+
+        private void OnDestroy()
+        {
+            if (IsOwner)
+            {
+                moveAction.action.Disable();
+
+                jumpAction.action.performed -= JumpAction_Performed;
+                jumpAction.action.Disable();
+
+                lookAction.action.performed -= LookAction_Performed;
+                lookAction.action.Disable();
+            }
         }
     }
 }
