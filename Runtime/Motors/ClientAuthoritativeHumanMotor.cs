@@ -160,8 +160,6 @@ namespace RoachRace.Networking
         private void SyncLookInput_OnChange(Vector3 prev, Vector3 next, bool asServer)
         {
             if (IsOwner) return;
-            _characterCamera.pitchInput = next.y;
-            _characterCamera.yawInput = next.x;
             proceduralAnimationFPSData.lookInput = next;
             proceduralAnimationFPSData.deltaLookInput = next - prev;
         }
