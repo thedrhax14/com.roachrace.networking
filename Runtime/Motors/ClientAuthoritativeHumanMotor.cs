@@ -1,4 +1,5 @@
 using FishNet.Object;
+using KINEMATION.CharacterAnimationSystem.Scripts.Runtime.Camera;
 using RoachRace.Controls;
 using System.Collections.Generic;
 using Unity.Cinemachine;
@@ -16,7 +17,7 @@ namespace RoachRace.Networking
 
         [Header("References")]
         [SerializeField] private SurvivorRemoteAnimator survivorRemoteAnimator;
-        [SerializeField] private HumanCameraController view;
+        [SerializeField] private CharacterCamera _characterCamera;
         [SerializeField] private CinemachineCamera virtualCamera;
 
         [Header("Input")]
@@ -75,7 +76,7 @@ namespace RoachRace.Networking
             if (IsOwner)
                 EnableInput();
 
-            if (view != null) view.enabled = IsOwner;
+            if (_characterCamera != null) _characterCamera.enabled = IsOwner;
             if (virtualCamera != null) virtualCamera.enabled = IsOwner;
         }
 
@@ -127,7 +128,7 @@ namespace RoachRace.Networking
 
             Vector2 move = moveAction.action.ReadValue<Vector2>();
 
-            _bodyYaw = motor.StepBodyYaw(_bodyYaw, view != null ? view.Yaw : _bodyYaw, _dt);
+            _bodyYaw = motor.StepBodyYaw(_bodyYaw, _characterCamera != null ? _characterCamera.yawInput : _bodyYaw, _dt);
             rb.MoveRotation(Quaternion.Euler(0f, _bodyYaw, 0f));
 
             bool isGrounded = IsGrounded();
@@ -148,7 +149,7 @@ namespace RoachRace.Networking
             Vector3 planarAccel = motor.ComputePlanarAcceleration(move, yaw, currentVel, isGrounded, _dt);
             rb.AddForce(planarAccel, ForceMode.Acceleration);
 
-            survivorRemoteAnimator.SetPitchAndYaw(view.Pitch, view.Yaw);
+            survivorRemoteAnimator.SetPitchAndYaw(_characterCamera.pitchInput, _characterCamera.yawInput);
         }
 
         private void OnCollisionStay(Collision collision)

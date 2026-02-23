@@ -2,7 +2,6 @@ using System;
 using FishNet.Connection;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
-using KINEMATION.CharacterAnimationSystem.Scripts.Runtime.Core;
 using RoachRace.Interaction;
 using RoachRace.Networking.Inventory;
 using UnityEngine;
@@ -27,16 +26,15 @@ namespace RoachRace.Networking
         [Header("Scene References")]
         [Tooltip("World-space root used to measure motion and to find facing direction. Usually the same VisualRoot you smooth.")]
         [SerializeField] private Transform visualRoot;
-        [SerializeField] private CharacterAnimationComponent characterAnimationComponent;
 
         [Tooltip("Animator which reads locomotion floats and receives triggers.")]
         [SerializeField] private Animator animator;
 
         [Header("Locomotion Params")]
-        [SerializeField] private string moveXParam = "MoveX";
-        [SerializeField] private string moveYParam = "MoveY";
-        [SerializeField] private string gaitParam = "Gait";
-        [SerializeField] private string isMovingParam = "IsMoving";
+        private string moveXParam = "MoveX";
+        private string moveYParam = "MoveY";
+        private string gaitParam = "Gait";
+        private string isMovingParam = "IsMoving";
 
         [Tooltip("Below this planar speed, treat as idle.")]
         [SerializeField, Min(0f)] private float idleSpeedThreshold = 0.08f;
@@ -53,15 +51,12 @@ namespace RoachRace.Networking
         [Tooltip("When smoothed animator floats get very small, snap them to 0 to prevent lingering micro-values/jitter.")]
         [SerializeField, Min(0f)] private float paramSnapToZeroThreshold = 0.01f;
 
-        [Header("State Params")]
-        [SerializeField] private string crouchBoolParam = "Crouch";
-        [SerializeField] private string isFirstPersonParam = "IsFirstPerson";
-
-        [Header("Event Params")]
-        [SerializeField] private string fireTriggerParam = "Fire";
-        [SerializeField] private string reloadTriggerParam = "Reload";
-        [SerializeField] private string useItemTriggerParam = "UseItem";
-        [SerializeField] private string useItemIdParam = "UseItemId";
+        private string crouchBoolParam = "Crouch";
+        private string isFirstPersonParam = "IsFirstPerson";
+        private string fireTriggerParam = "Fire";
+        private string reloadTriggerParam = "Reload";
+        private string useItemTriggerParam = "UseItem";
+        private string useItemIdParam = "UseItemId";
 
         private readonly SyncVar<bool> _isCrouching = new(false);
 
@@ -71,7 +66,6 @@ namespace RoachRace.Networking
         private int _isMovingHash;
         private int _crouchHash;
         private int _isFirstPersonHash;
-
         private int _fireTriggerHash;
         private int _reloadTriggerHash;
         private int _useItemTriggerHash;
@@ -147,11 +141,6 @@ namespace RoachRace.Networking
             if(inventory.TryGetSelectedItemInstance(out var slotState, out var itemInstance)) 
                 return itemInstance.ItemComponent;
             else return null;
-        }
-
-        public void UpdateActiveItem()
-        {
-            characterAnimationComponent.UpdateAnimationSettings(GetActiveItem().animationSettings);
         }
 
         public override void OnStartClient()

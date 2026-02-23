@@ -362,8 +362,11 @@ namespace RoachRace.Networking.Inventory
             if (!IsClientInitialized) return;
             if (!_inventoryReady.Value) return;
             if (_characterAnimationInitialized) return;
-            if(TryGetComponent(out SurvivorRemoteAnimator animator))
-                animator.UpdateActiveItem();
+
+            // Ensure selection visuals (and equip callbacks) run once when initial replicated state arrives.
+            // This also causes PlayerItemRegistry to apply CAS animation settings for the selected item.
+            ApplySelectionVisuals(_selectedSlotIndex.Value);
+            _characterAnimationInitialized = true;
         }
 
         /// <summary>
@@ -381,8 +384,6 @@ namespace RoachRace.Networking.Inventory
             ApplySelectionVisuals(next);
 
             if (IsOwner) _uiModelDirty = true;
-            if(TryGetComponent(out SurvivorRemoteAnimator animator))
-                animator.UpdateActiveItem();
         }
 
         /// <summary>
