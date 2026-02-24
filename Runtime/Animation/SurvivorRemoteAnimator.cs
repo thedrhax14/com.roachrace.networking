@@ -6,6 +6,10 @@ using RoachRace.Interaction;
 using RoachRace.Networking.Inventory;
 using UnityEngine;
 
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
+
 namespace RoachRace.Networking
 {
     /// <summary>
@@ -51,6 +55,16 @@ namespace RoachRace.Networking
         [Tooltip("When smoothed animator floats get very small, snap them to 0 to prevent lingering micro-values/jitter.")]
         [SerializeField, Min(0f)] private float paramSnapToZeroThreshold = 0.01f;
 
+        [Header("Debug")]
+        [Tooltip("Draws derived (non-Rigidbody) planar velocity text in Scene View.")]
+        [SerializeField] private bool debugDrawVelocityLabel = false;
+
+        [Tooltip("Only draw the label when this object is selected in the editor.")]
+        [SerializeField] private bool debugOnlyWhenSelected = true;
+
+        [Tooltip("World-space offset for the Scene View label.")]
+        [SerializeField] private Vector3 debugLabelOffset = new(0f, 1.9f, 0f);
+
         private string crouchBoolParam = "Crouch";
         private string isFirstPersonParam = "IsFirstPerson";
         private string fireTriggerParam = "Fire";
@@ -75,6 +89,8 @@ namespace RoachRace.Networking
         private Vector3 _lastPos;
         private bool _hasLast;
         private Vector3 _smoothedPlanarVel;
+
+        private float _lastDerivedPlanarSpeed;
 
         private float _moveX;
         private float _moveY;
@@ -192,6 +208,7 @@ namespace RoachRace.Networking
             _smoothedPlanarVel = Vector3.Lerp(_smoothedPlanarVel, planarVel, alphaVel);
 
             float speed = _smoothedPlanarVel.magnitude;
+            _lastDerivedPlanarSpeed = speed;
             bool isMoving = speed > idleSpeedThreshold;
 
             Vector3 forward = Vector3.ProjectOnPlane(visualRoot.forward, Vector3.up);
@@ -242,6 +259,29 @@ namespace RoachRace.Networking
 
             _lookInput = Vector2.Lerp(_lookInput, _targetLookInput, Time.deltaTime * 10f);
         }
+
+#if UNITY_EDITOR
+        private void OnDrawGizmos()
+        {
+            if (!debugDrawVelocityLabel)
+                return;
+
+            if (debugOnlyWhenSelected && Selection.activeGameObject != gameObject)
+                return;
+
+            if (visualRoot == null || !visualRoot.gameObject.activeInHierarchy)
+                return;
+
+            Vector3 planarVel = _smoothedPlanarVel;
+            float speed = _lastDerivedPlanarSpeed;
+
+            Vector3 labelPos = visualRoot.position + debugLabelOffset;
+            string text = $"v(planar): {speed:0.00} m/s\nvel: ({planarVel.x:0.00}, {planarVel.z:0.00})";
+
+            Handles.zTest = UnityEngine.Rendering.CompareFunction.LessEqual;
+            Handles.Label(labelPos, text);
+        }
+#endif
 
         private static float SnapToZero(float value, float threshold)
         {
