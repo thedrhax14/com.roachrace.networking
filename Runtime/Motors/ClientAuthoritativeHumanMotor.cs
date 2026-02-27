@@ -39,11 +39,14 @@ namespace RoachRace.Networking
         private int _jumpBufferTicksRemaining;
         private int _coyoteTicksMax;
         private int _jumpBufferTicksMax;
-        private Vector3 _lookInput;
+        private Vector3 _lookRotation;
         private readonly SyncVar<Vector3> _syncLookInput = new (Vector3.zero);
         private Quaternion _aimRotation = Quaternion.identity;
+        private Quaternion _syncedAimRotation = Quaternion.identity;
 
         private readonly HashSet<int> _groundColliderIds = new();
+
+        public Quaternion AimRotation => _syncedAimRotation;
 
         private void Awake()
         {
@@ -137,18 +140,19 @@ namespace RoachRace.Networking
                 return;
 
             Vector2 input = ctx.ReadValue<Vector2>();
-            _lookInput.x += input.x;
-            _lookInput.y = Mathf.Clamp(_lookInput.y - input.y, -90f, 90f);
-            _lookInput.z = KMath.FloatInterp(_lookInput.z, 0, 8f, Time.deltaTime);
+            _lookRotation.x += input.x;
+            _lookRotation.y = Mathf.Clamp(_lookRotation.y - input.y, -90f, 90f);
+            _lookRotation.z = KMath.FloatInterp(_lookRotation.z, 0, 8f, Time.deltaTime);
             
-            _aimRotation *= Quaternion.Euler(0f, input.x, 0f);
+            _aimRotation = Quaternion.Euler(0f, _lookRotation.x, 0f);
+            _syncedAimRotation = Quaternion.Euler(_lookRotation.y, _lookRotation.x, 0f);
             _aimRotation.Normalize();
             
-            _characterCamera.pitchInput = _lookInput.y;
+            _characterCamera.pitchInput = _lookRotation.y;
             _characterCamera.yawInput = _aimRotation.eulerAngles.y;
-            proceduralAnimationFPSData.lookInput = _lookInput;
+            proceduralAnimationFPSData.lookInput = _lookRotation;
             proceduralAnimationFPSData.deltaLookInput = input;
-            SetSyncLookInputRPC(_lookInput);
+            SetSyncLookInputRPC(_lookRotation);
         }
 
         [ServerRpc]
@@ -157,11 +161,12 @@ namespace RoachRace.Networking
             _syncLookInput.Value = value;
         }
 
-        private void SyncLookInput_OnChange(Vector3 prev, Vector3 next, bool asServer)
+        private void SyncLookInput_OnChange(Vector3 prevRotation, Vector3 nextRotation, bool asServer)
         {
             if (IsOwner) return;
-            proceduralAnimationFPSData.lookInput = next;
-            proceduralAnimationFPSData.deltaLookInput = next - prev;
+            proceduralAnimationFPSData.lookInput = nextRotation;
+            proceduralAnimationFPSData.deltaLookInput = nextRotation - prevRotation;
+            _syncedAimRotation = Quaternion.Euler(nextRotation.y, nextRotation.x, 0);
         }
 
         private bool IsGrounded()
@@ -201,8 +206,8 @@ namespace RoachRace.Networking
             Vector3 planarAccel = motor.ComputePlanarAcceleration(move, yaw, currentVel, isGrounded, _dt);
             rb.AddForce(planarAccel, ForceMode.Acceleration);
 
-            survivorRemoteAnimator.SetPitchAndYaw(_lookInput.x, _lookInput.y);
-            proceduralAnimationFPSData.lookInput = _lookInput;
+            survivorRemoteAnimator.SetPitchAndYaw(_lookRotation.x, _lookRotation.y);
+            proceduralAnimationFPSData.lookInput = _lookRotation;
         }
 
         private void OnCollisionStay(Collision collision)
