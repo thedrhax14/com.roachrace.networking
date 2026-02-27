@@ -1,6 +1,6 @@
 {
   "name": "com.roachrace.networking",
-  "version": "1.0.45",
+  "version": "1.0.46",
   "displayName": "RoachRace Networking",
   "description": "FishNet networking integration for RoachRace multiplayer racing game",
   "unity": "2021.3",
