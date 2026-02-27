@@ -27,6 +27,7 @@ namespace RoachRace.Networking
         [SerializeField] private InputActionReference moveAction;
         [SerializeField] private InputActionReference jumpAction;
         [SerializeField] private InputActionReference lookAction;
+        [SerializeField] private float lookSensitivity = 15f;
 
         private Rigidbody rb;
         private CapsuleCollider capsuleCollider;
@@ -140,8 +141,8 @@ namespace RoachRace.Networking
                 return;
 
             Vector2 input = ctx.ReadValue<Vector2>();
-            _lookRotation.x += input.x;
-            _lookRotation.y = Mathf.Clamp(_lookRotation.y - input.y, -90f, 90f);
+            _lookRotation.x += input.x * Time.deltaTime * lookSensitivity;
+            _lookRotation.y = Mathf.Clamp(_lookRotation.y - input.y * Time.deltaTime * lookSensitivity, -90f, 90f);
             _lookRotation.z = KMath.FloatInterp(_lookRotation.z, 0, 8f, Time.deltaTime);
             
             _aimRotation = Quaternion.Euler(0f, _lookRotation.x, 0f);
@@ -164,7 +165,8 @@ namespace RoachRace.Networking
         private void SyncLookInput_OnChange(Vector3 prevRotation, Vector3 nextRotation, bool asServer)
         {
             if (IsOwner) return;
-            proceduralAnimationFPSData.lookInput = nextRotation;
+            proceduralAnimationFPSData.smoothLookInput = true;
+            proceduralAnimationFPSData.targetLookInput = nextRotation;
             proceduralAnimationFPSData.deltaLookInput = nextRotation - prevRotation;
             _syncedAimRotation = Quaternion.Euler(nextRotation.y, nextRotation.x, 0);
         }
