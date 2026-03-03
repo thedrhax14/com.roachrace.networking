@@ -764,6 +764,10 @@ namespace RoachRace.Networking.Inventory
 
         /// <summary>
         /// Server-authoritative use by item definition id.<br/>
+        /// Currently the code that reports use failures is somewhat duplicated between this and <see cref="ServerUseSelected"/>;
+        /// Could be unified if desired since they share a lot of validation steps, but for now it's separate for clarity and 
+        /// because they may diverge in the future (e.g., if we want to allow using by id from non-selected slots). I am
+        /// considering to move this to items code. Maybe we will move all item related code to networking package<br/>
         /// <br/>
         /// Typical behavior:<br/>
         /// - Validates the item is usable and available.<br/>
@@ -822,6 +826,13 @@ namespace RoachRace.Networking.Inventory
             if (!itemRegistry.TryGetItem(itemId, out IRoachRaceItem item))
             {
                 ReportUseFailed(itemId, slotIndex, ItemUseFailReason.MissingItemComponent);
+                return false;
+            }
+
+            // Optional server-side gating hook.
+            if (item is IServerItemUseGate gate && !gate.CanStartUse(this, slotIndex, out var gateReason))
+            {
+                ReportUseFailed(itemId, slotIndex, gateReason != ItemUseFailReason.None ? gateReason : ItemUseFailReason.ServerRejected);
                 return false;
             }
 
@@ -1105,6 +1116,13 @@ namespace RoachRace.Networking.Inventory
                 return false;
             }
 
+            // Optional server-side gating hook.
+            if (item is IServerItemUseGate gate && !gate.CanStartUse(this, idx, out var gateReason))
+            {
+                ReportUseFailed(slot.ItemId, idx, gateReason != ItemUseFailReason.None ? gateReason : ItemUseFailReason.ServerRejected);
+                return false;
+            }
+
             int seed = UnityEngine.Random.Range(0, int.MaxValue);
             item.InitializeUseContext(seed, OwnerId, true, gameObject);
 
@@ -1132,6 +1150,24 @@ namespace RoachRace.Networking.Inventory
             // If the item is consumable, it can call back into inventory removal itself later.
             // For now, keycard/heal items already manage their own charges; inventory count represents possession.
             return true;
+        }
+
+        /// <summary>
+        /// Server-only: forces stopping use of an item by id and broadcasts stop to observers.
+        /// Intended for weapon logic (eg, magazine reached 0 during automatic fire).
+        /// </summary>
+        [Server]
+        public void ForceStopUsingItem(ushort itemId)
+        {
+            if (!IsServerInitialized) return;
+            if (itemId == 0) return;
+            if (itemRegistry == null) return;
+
+            if (!itemRegistry.TryGetItem(itemId, out IRoachRaceItem item) || item == null)
+                return;
+
+            item.UseStop();
+            StopItemObserversRpc(itemId);
         }
 
         /// <summary>

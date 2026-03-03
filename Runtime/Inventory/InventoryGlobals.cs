@@ -19,6 +19,9 @@ namespace RoachRace.Networking.Inventory
         [Tooltip("Required. The single InventoryModel used for the local HUD.")]
         public InventoryModel inventoryModel;
 
+        [Tooltip("Optional. Weapon HUD model for ammo counter + weapon icon.")]
+        public WeaponHudModel weaponHudModel;
+
         private static InventoryGlobals _cached;
         private static bool _attemptedLoad;
 

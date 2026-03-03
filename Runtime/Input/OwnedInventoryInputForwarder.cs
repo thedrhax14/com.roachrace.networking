@@ -1,6 +1,7 @@
 using FishNet.Connection;
 using FishNet.Object;
 using RoachRace.Networking.Inventory;
+using RoachRace.Networking.Weapons;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -30,6 +31,9 @@ namespace RoachRace.Networking.Input
         [Tooltip("Action used to trigger using the currently selected item.")]
         [SerializeField] private InputActionReference useItemAction;
 
+        [Tooltip("Optional. Action used to trigger reloading the currently selected weapon (if it has a NetworkWeaponMagazine).")]
+        [SerializeField] private InputActionReference reloadAction;
+
         [Tooltip("Optional. Action which provides 1..9 as a float value to select slots.")]
         [SerializeField] private InputActionReference digitSelectedAction;
 
@@ -38,6 +42,7 @@ namespace RoachRace.Networking.Input
         [SerializeField] private NetworkPlayerInventory _inventory;
 
         private InputAction _useAction;
+        private InputAction _reloadAction;
         private InputAction _digitAction;
 
         private bool _useWasPressed;
@@ -107,13 +112,79 @@ namespace RoachRace.Networking.Input
         private void BindActions()
         {
             BindUseAction();
+            BindReloadAction();
             BindDigitAction();
         }
 
         private void UnbindActions()
         {
             UnbindUseAction();
+            UnbindReloadAction();
             UnbindDigitAction();
+        }
+
+        private void BindReloadAction()
+        {
+            if (_reloadAction != null)
+                return;
+
+            if (reloadAction == null)
+                return;
+
+            var action = reloadAction.action;
+            if (action == null)
+                return;
+
+            _reloadAction = action;
+
+            if (!_reloadAction.enabled)
+            {
+                _reloadAction.Enable();
+                if (logBinding)
+                    Debug.Log($"[{nameof(OwnedInventoryInputForwarder)}] Enabled Reload '{_reloadAction.name}' (assetInstanceId={_reloadAction.actionMap?.asset?.GetInstanceID()}).", gameObject);
+            }
+
+            _reloadAction.performed += OnReloadPerformed;
+
+            if (logBinding)
+                Debug.Log($"[{nameof(OwnedInventoryInputForwarder)}] Bound Reload '{_reloadAction.name}' on '{gameObject.name}'.", gameObject);
+        }
+
+        private void UnbindReloadAction()
+        {
+            if (_reloadAction == null)
+                return;
+
+            _reloadAction.performed -= OnReloadPerformed;
+
+            if (logBinding)
+                Debug.Log($"[{nameof(OwnedInventoryInputForwarder)}] Unbound Reload '{_reloadAction.name}' on '{gameObject.name}'.", gameObject);
+
+            _reloadAction = null;
+        }
+
+        private void OnReloadPerformed(InputAction.CallbackContext ctx)
+        {
+            if (logInputEvents)
+                Debug.Log($"[{nameof(OwnedInventoryInputForwarder)}] Action '{ctx.action.name}' phase={ctx.phase} enabled={ctx.action.enabled} IsOwner={IsOwner} OwnerId={OwnerId}", gameObject);
+
+            if (!IsOwner || !IsClientInitialized)
+                return;
+
+            if (_inventory == null)
+                return;
+
+            if (!_inventory.TryGetSelectedItem(out var item) || item == null)
+                return;
+
+            if (item is not MonoBehaviour itemBehaviour)
+                return;
+
+            var mag = itemBehaviour.GetComponent<NetworkWeaponMagazine>();
+            if (mag == null)
+                return;
+
+            mag.RequestReload();
         }
 
         private void BindUseAction()

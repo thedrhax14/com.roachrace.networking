@@ -40,6 +40,15 @@ namespace RoachRace.Networking.Inventory
 
         /// <summary>Server rejected use for unspecified reasons (fallback).</summary>
         ServerRejected,
+
+        /// <summary>Item cannot be used because its weapon magazine is empty.</summary>
+        NoAmmoInMagazine,
+
+        /// <summary>Item cannot be used because a reload is currently in progress.</summary>
+        Reloading,
+
+        /// <summary>Reload was requested but the magazine is already full.</summary>
+        MagazineFull,
     }
 
     /// <summary>
