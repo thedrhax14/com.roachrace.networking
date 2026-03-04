@@ -829,6 +829,11 @@ namespace RoachRace.Networking.Inventory
                 return false;
             }
 
+            // Some items rely on client-derived aim data (e.g., raycast from camera).
+            // Apply aim BEFORE gating so gate implementations can validate the aimed target.
+            if (aimOrigin.HasValue && aimDirection.HasValue && item is IRoachRaceAimItem aimItemPreGate)
+                aimItemPreGate.SetAim(aimOrigin.Value, aimDirection.Value);
+
             // Optional server-side gating hook.
             if (item is IServerItemUseGate gate && !gate.CanStartUse(this, slotIndex, out var gateReason))
             {
@@ -839,6 +844,8 @@ namespace RoachRace.Networking.Inventory
             int seed = UnityEngine.Random.Range(0, int.MaxValue);
             item.InitializeUseContext(seed, OwnerId, true, gameObject);
 
+            // Aim may have already been set above for gating; set again here to ensure the current use context
+            // sees the latest values even if the item overwrote aim during gating.
             if (aimOrigin.HasValue && aimDirection.HasValue && item is IRoachRaceAimItem aimItem)
                 aimItem.SetAim(aimOrigin.Value, aimDirection.Value);
 
@@ -1116,6 +1123,11 @@ namespace RoachRace.Networking.Inventory
                 return false;
             }
 
+            // Some items rely on client-derived aim data (e.g., raycast from camera).
+            // Apply aim BEFORE gating so gate implementations can validate the aimed target.
+            if (aimOrigin.HasValue && aimDirection.HasValue && item is IRoachRaceAimItem aimItemPreGate)
+                aimItemPreGate.SetAim(aimOrigin.Value, aimDirection.Value);
+
             // Optional server-side gating hook.
             if (item is IServerItemUseGate gate && !gate.CanStartUse(this, idx, out var gateReason))
             {
@@ -1126,7 +1138,8 @@ namespace RoachRace.Networking.Inventory
             int seed = UnityEngine.Random.Range(0, int.MaxValue);
             item.InitializeUseContext(seed, OwnerId, true, gameObject);
 
-            // Some items rely on client-derived aim data (e.g., raycast from camera).
+            // Aim may have already been set above for gating; set again here to ensure the current use context
+            // sees the latest values even if the item overwrote aim during gating.
             if (aimOrigin.HasValue && aimDirection.HasValue && item is IRoachRaceAimItem aimItem)
                 aimItem.SetAim(aimOrigin.Value, aimDirection.Value);
 

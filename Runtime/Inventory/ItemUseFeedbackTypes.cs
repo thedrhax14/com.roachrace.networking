@@ -49,6 +49,9 @@ namespace RoachRace.Networking.Inventory
 
         /// <summary>Reload was requested but the magazine is already full.</summary>
         MagazineFull,
+
+        /// <summary>Item target is currently busy/in use by another player.</summary>
+        TargetBusy,
     }
 
     /// <summary>
