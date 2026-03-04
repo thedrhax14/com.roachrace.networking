@@ -167,12 +167,15 @@ namespace RoachRace.Networking.Input
         {
             if (logInputEvents)
                 Debug.Log($"[{nameof(OwnedInventoryInputForwarder)}] Action '{ctx.action.name}' phase={ctx.phase} enabled={ctx.action.enabled} IsOwner={IsOwner} OwnerId={OwnerId}", gameObject);
+    
+            if (!IsOwner)
+                return; // Shouldn't happen that reload is triggered without ownership, but just in case.
 
-            if (!IsOwner || !IsClientInitialized)
-                return;
+            if (!IsClientInitialized)
+                return; // If client isn't initialized, inventory might not be ready yet. Ignore the input; it will be processed when the client starts and bindings are refreshed.
 
             if (_inventory == null)
-                return;
+                return; // Inventory is required for reload, but just in case it's null, don't throw an error on reload input.
 
             if (!_inventory.TryGetSelectedItem(out var item) || item == null)
                 return;
@@ -180,8 +183,7 @@ namespace RoachRace.Networking.Input
             if (item is not MonoBehaviour itemBehaviour)
                 return;
 
-            var mag = itemBehaviour.GetComponent<NetworkWeaponMagazine>();
-            if (mag == null)
+            if (!itemBehaviour.TryGetComponent<NetworkWeaponMagazine>(out var mag))
                 return;
 
             mag.RequestReload();

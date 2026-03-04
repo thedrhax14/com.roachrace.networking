@@ -33,11 +33,22 @@ namespace RoachRace.Networking.Weapons
         [Tooltip("If true, magazine starts full on server spawn.")]
         [SerializeField] private bool startFull = true;
 
+        [Tooltip("Reload duration used for the networked reload timer.")]
+        [SerializeField, Min(0.05f)] private float reloadDurationSeconds = 1.6f;
+
         private readonly SyncVar<int> _ammoInMag = new(0);
         private readonly SyncVar<bool> _isReloading = new(false);
 
+        // SyncTimer is used to deterministically complete reloads even when animation events are unreliable on server.
+        private readonly SyncTimer _reloadTimer = new();
+
         private NetworkPlayerInventory _inventory;
         private ItemInstance _itemInstance;
+
+        // Owner-only client prediction for presentation.
+        private int _predictedAmmoInMag;
+        private bool _predictionInitialized;
+        private bool _hudActive;
 
         [Header("UI (Optional)")]
         [Tooltip("Optional. If assigned (or provided via InventoryGlobals), owner client will push weapon HUD state into this model.")]
@@ -46,10 +57,71 @@ namespace RoachRace.Networking.Weapons
         [Tooltip("Optional. Used to resolve the weapon icon from the ItemDefinition.")]
         [SerializeField] private ItemDatabase itemDatabase;
 
+        private Sprite _resolvedIcon;
+        private bool _iconResolved;
+
         public ushort AmmoItemId => ammoItemId;
         public int MagazineSize => magazineSize;
         public int AmmoInMag => _ammoInMag.Value;
         public bool IsReloading => _isReloading.Value;
+
+        /// <summary>
+        /// Owner-only presentation value. Never exceeds server ammo.
+        /// </summary>
+        public int PredictedAmmoInMag => _predictionInitialized ? _predictedAmmoInMag : _ammoInMag.Value;
+
+        /// <summary>
+        /// Called by the equipped item to allow this magazine to control the shared WeaponHudModel.
+        /// Only meaningful on the owning client.
+        /// </summary>
+        public void SetHudActive(bool active)
+        {
+            _hudActive = active;
+
+            if (!IsOwner || weaponHudModel == null)
+                return;
+
+            if (_hudActive)
+            {
+                PushHudState();
+            }
+            else
+            {
+                // Clear to avoid stale HUD when nothing is equipped.
+                weaponHudModel.SetWeapon(null, 0, 0);
+                weaponHudModel.SetAmmoInMag(0);
+                weaponHudModel.SetReloading(false);
+                weaponHudModel.NotifyAll();
+            }
+        }
+
+        /// <summary>
+        /// Owner-client only. Decrements predicted ammo for local presentation.
+        /// Returns true if a shot should play VFX/SFX.
+        /// </summary>
+        public bool TryPredictLocalShotForPresentation()
+        {
+            if (!IsOwner || !IsClientInitialized)
+                return true;
+
+            InitializePredictionIfNeeded();
+
+            if (_isReloading.Value)
+                return false;
+
+            // Never allow prediction to exceed the latest server value.
+            _predictedAmmoInMag = Mathf.Min(_predictedAmmoInMag, _ammoInMag.Value);
+
+            if (_predictedAmmoInMag <= 0)
+                return false;
+
+            _predictedAmmoInMag = Mathf.Max(0, _predictedAmmoInMag - 1);
+
+            if (_hudActive && weaponHudModel != null)
+                weaponHudModel.SetAmmoInMag(_predictedAmmoInMag);
+
+            return true;
+        }
 
         /// <summary>
         /// Animation-event entry point.
@@ -58,10 +130,8 @@ namespace RoachRace.Networking.Weapons
         /// </summary>
         public void NotifyReloadAnimationEnded()
         {
-            if (!IsServerInitialized)
-                return;
-
-            ServerFinishReload();
+            // Intentionally no-op for gameplay.
+            // Reload completion is handled by the synced reload timer to avoid relying on animation events.
         }
 
         public override void OnStartServer()
@@ -109,6 +179,38 @@ namespace RoachRace.Networking.Weapons
                 if (itemDatabase == null)
                     itemDatabase = globals.itemDatabase;
             }
+
+            _reloadTimer.OnChange += OnReloadTimerChanged;
+        }
+
+        private void OnDestroy()
+        {
+            _reloadTimer.OnChange -= OnReloadTimerChanged;
+        }
+
+        private void Update()
+        {
+            // Keep the SyncTimer progressing on both server and clients.
+            if (!IsServerInitialized && !IsClientInitialized)
+                return;
+
+            if (_reloadTimer.Remaining > 0f)
+                _reloadTimer.Update();
+        }
+
+        private void OnReloadTimerChanged(SyncTimerOperation op, float prev, float next, bool asServer)
+        {
+            if (op != SyncTimerOperation.Finished)
+                return;
+
+            if (!asServer)
+                return;
+
+            // Only commit if still reloading (prevents double-completion).
+            if (!_isReloading.Value)
+                return;
+
+            ServerFinishReload();
         }
 
         public override void OnStartClient()
@@ -121,19 +223,14 @@ namespace RoachRace.Networking.Weapons
             if (weaponHudModel == null)
                 return;
 
-            // Set static presentation fields (icon + ammo item id).
-            Sprite icon = null;
-            if (itemDatabase != null && _itemInstance != null && _itemInstance.ItemId != 0 && itemDatabase.TryGet(_itemInstance.ItemId, out var def) && def != null)
-                icon = def.icon;
-
-            weaponHudModel.SetWeapon(icon, ammoItemId, magazineSize);
-            weaponHudModel.SetAmmoInMag(_ammoInMag.Value);
-            weaponHudModel.SetReloading(_isReloading.Value);
+            InitializePredictionIfNeeded();
 
             _ammoInMag.OnChange += OnAmmoInMagChanged;
             _isReloading.OnChange += OnReloadingChanged;
 
-            weaponHudModel.NotifyAll();
+            // Do not push HUD here; only the equipped weapon should drive the shared model.
+            if (_hudActive)
+                PushHudState();
         }
 
         public override void OnStopClient()
@@ -148,7 +245,13 @@ namespace RoachRace.Networking.Weapons
             if (!IsOwner || weaponHudModel == null)
                 return;
 
-            weaponHudModel.SetAmmoInMag(next);
+            InitializePredictionIfNeeded();
+
+            // Never let predicted exceed server.
+            _predictedAmmoInMag = Mathf.Min(_predictedAmmoInMag, next);
+
+            if (_hudActive)
+                weaponHudModel.SetAmmoInMag(_predictedAmmoInMag);
         }
 
         private void OnReloadingChanged(bool prev, bool next, bool asServer)
@@ -156,7 +259,52 @@ namespace RoachRace.Networking.Weapons
             if (!IsOwner || weaponHudModel == null)
                 return;
 
-            weaponHudModel.SetReloading(next);
+            InitializePredictionIfNeeded();
+
+            // Reload finished: snap predicted up to server (allowed jump-up).
+            if (prev && !next)
+                _predictedAmmoInMag = _ammoInMag.Value;
+
+            if (_hudActive)
+            {
+                weaponHudModel.SetReloading(next);
+                weaponHudModel.SetAmmoInMag(_predictedAmmoInMag);
+            }
+        }
+
+        private void InitializePredictionIfNeeded()
+        {
+            if (_predictionInitialized)
+                return;
+
+            _predictedAmmoInMag = _ammoInMag.Value;
+            _predictionInitialized = true;
+        }
+
+        private void PushHudState()
+        {
+            if (!IsOwner || weaponHudModel == null)
+                return;
+
+            InitializePredictionIfNeeded();
+            ResolveIconIfNeeded();
+
+            weaponHudModel.SetWeapon(_resolvedIcon, ammoItemId, magazineSize);
+            weaponHudModel.SetAmmoInMag(_predictedAmmoInMag);
+            weaponHudModel.SetReloading(_isReloading.Value);
+            weaponHudModel.NotifyAll();
+        }
+
+        private void ResolveIconIfNeeded()
+        {
+            if (_iconResolved)
+                return;
+
+            _iconResolved = true;
+            _resolvedIcon = null;
+
+            if (itemDatabase != null && _itemInstance != null && _itemInstance.ItemId != 0 && itemDatabase.TryGet(_itemInstance.ItemId, out var def) && def != null)
+                _resolvedIcon = def.icon;
         }
 
         /// <summary>
@@ -268,6 +416,9 @@ namespace RoachRace.Networking.Weapons
             PlayReloadVisualsServer();
             PlayReloadVisualsObserversRpc();
 
+            // Deterministic, synced reload completion.
+            _reloadTimer.StartTimer(reloadDurationSeconds);
+
             reason = ItemUseFailReason.None;
             return true;
         }
@@ -291,6 +442,10 @@ namespace RoachRace.Networking.Weapons
         {
             if (!_isReloading.Value)
                 return;
+
+            // Stop any active timer so it cannot finish again later.
+            if (_reloadTimer.Remaining > 0f)
+                _reloadTimer.StopTimer(sendRemaining: false);
 
             int size = Mathf.Max(1, magazineSize);
             int needed = Mathf.Max(0, size - _ammoInMag.Value);
