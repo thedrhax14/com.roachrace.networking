@@ -946,6 +946,101 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
+        /// Server-authoritative add to inventory, returning exactly how many units were actually added.
+        /// Useful when granting from a world pickup which must retain leftover units if the inventory is full.
+        /// </summary>
+        /// <returns>
+        /// Units successfully added ($0..amount$).
+        /// </returns>
+        [Server]
+        public int AddItemUpTo(ushort itemId, int amount)
+        {
+            if (itemId == 0) return 0;
+            if (amount <= 0) return 0;
+
+            int remaining = amount;
+            int added = 0;
+
+            // If stackable, fill existing stacks first.
+            if (TryGetDefinition(itemId, out var def) && def != null && def.stackable)
+            {
+                for (int i = 0; i < Slots.Count && remaining > 0; i++)
+                {
+                    var s = Slots[i];
+                    if (s.IsEmpty) continue;
+                    if (s.ItemId != itemId) continue;
+
+                    int maxStack = Mathf.Max(1, def.maxStack);
+                    int canAdd = maxStack - s.Count;
+                    if (canAdd <= 0) continue;
+
+                    int toAdd = Mathf.Min(canAdd, remaining);
+                    s.Count = (byte)(s.Count + toAdd);
+                    Slots[i] = s;
+                    remaining -= toAdd;
+                    added += toAdd;
+                }
+            }
+
+            // Put remaining into empty slots.
+            for (int i = 0; i < Slots.Count && remaining > 0; i++)
+            {
+                var s = Slots[i];
+                if (!s.IsEmpty) continue;
+
+                int put;
+                if (TryGetDefinition(itemId, out var def2) && def2 != null && def2.stackable)
+                {
+                    int maxStack = Mathf.Max(1, def2.maxStack);
+                    put = Mathf.Min(maxStack, remaining);
+                }
+                else
+                {
+                    put = 1;
+                }
+
+                Slots[i] = new InventorySlotState { ItemId = itemId, Count = (byte)put };
+                remaining -= put;
+                added += put;
+            }
+
+            return added;
+        }
+
+        /// <summary>
+        /// Server-authoritative removal of the entire selected stack.
+        /// Intended for "drop selected" behavior.
+        /// </summary>
+        [Server]
+        public bool TryRemoveSelectedStack(out ushort itemId, out byte count)
+        {
+            itemId = 0;
+            count = 0;
+
+            int idx = _selectedSlotIndex.Value;
+            if (idx < 0 || idx >= Slots.Count) return false;
+
+            var s = Slots[idx];
+            if (s.IsEmpty) return false;
+
+            itemId = s.ItemId;
+            count = s.Count;
+            Slots[idx] = default;
+
+            // Slot became empty; ensure equipped visuals are updated for everyone.
+            ApplySelectionVisuals(idx);
+            SetSelectionVisualsObserversRpc(idx);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves an ItemDefinition via the configured ItemDatabase.
+        /// This is useful for other server-authoritative systems (eg drop gating) which need definition flags.
+        /// </summary>
+        public bool TryResolveDefinition(ushort id, out ItemDefinition def) => TryGetDefinition(id, out def);
+
+        /// <summary>
         /// Server-authoritative removal of one unit from the currently selected slot.<br/>
         ///<br/>
         /// Typical behavior:<br/>

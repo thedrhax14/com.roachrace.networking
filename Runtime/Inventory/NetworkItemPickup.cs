@@ -1,4 +1,5 @@
 using FishNet.Object;
+using FishNet.Object.Synchronizing;
 using RoachRace.Data;
 using RoachRace.Interaction;
 using RoachRace.Networking.Inventory;
@@ -11,14 +12,13 @@ namespace RoachRace.Networking
     /// 
     /// Prefab setup:
     /// - Must have a NetworkObject.
-    /// - Must have a Trigger collider (IsTrigger = true).
-    /// - This component should be on the same GameObject as the collider (or any child collider; it uses OnTriggerEnter).
+    /// - Must have a Collider so server raycasts can hit it.
     /// - itemId must correspond to an ItemDefinition id present in your ItemDatabase.
     /// 
     /// Runtime behavior:
-    /// - Server grants the item when a player enters the trigger.
-    /// - By default only Survivors can pick it up.
-    /// - Pickup despawns server-side after successful grant.
+    /// - Manual pickup only (look + press): server validates and transfers into inventory.
+    /// - Survivor-only pickup (enforced server-side).
+    /// - Pickup despawns server-side after fully transferring all remaining units.
     /// </summary>
     [DisallowMultipleComponent]
     [RequireComponent(typeof(NetworkObject))]
@@ -30,14 +30,26 @@ namespace RoachRace.Networking
 
         [Tooltip("ItemDefinition id to grant. 0 is reserved for empty. This is the value actually used at runtime/network.")]
         [SerializeField] private ushort itemId = 1;
-        [Tooltip("How many to grant. For non-stackable items this will effectively grant 1 per empty slot.")]
+        [Tooltip("Initial amount available in this pickup. For non-stackable items this will effectively grant 1 per empty slot.")]
         [SerializeField] private byte amount = 1;
-        [Tooltip("If true, only players on Team.Survivor can pick this up.")]
-        [SerializeField] private bool survivorsOnly = true;
+
+        private readonly SyncVar<byte> _remainingAmount = new(0);
+
+        public ushort ItemId => itemId;
+        public byte RemainingAmount => _remainingAmount.Value;
 
         private void Awake()
         {
             SyncItemIdFromDefinition();
+        }
+
+        public override void OnStartServer()
+        {
+            base.OnStartServer();
+
+            // If not initialized by a spawner, default to inspector amount.
+            if (_remainingAmount.Value == 0)
+                _remainingAmount.Value = amount;
         }
 
 #if UNITY_EDITOR
@@ -56,25 +68,46 @@ namespace RoachRace.Networking
             gameObject.name = $"ItemPickup_{itemDefinition.displayName}_(id{itemId})";
         }
 
-        private void OnTriggerEnter(Collider other)
+        /// <summary>
+        /// Server-only: initialize this pickup's payload.
+        /// Intended for drops (inventory -> world) and runtime spawns.
+        /// </summary>
+        [Server]
+        public void ServerSetPayload(ushort newItemId, byte newAmount)
         {
-            if (!IsServerInitialized) return;
+            if (newItemId == 0) return;
+            if (newAmount == 0) return;
 
-            var inv = other.GetComponentInParent<NetworkPlayerInventory>();
-            if (inv == null) return;
+            itemId = newItemId;
+            amount = newAmount;
+            _remainingAmount.Value = newAmount;
+        }
 
-            if (survivorsOnly)
-            {
-                var player = inv.GetComponent<NetworkPlayer>();
-                if (player != null && player.Team != Team.Survivor) return;
-            }
+        /// <summary>
+        /// Server-only: attempt to transfer from this pickup into the player's inventory.
+        /// Will retain leftover units in the pickup if the inventory cannot fit everything.
+        /// </summary>
+        [Server]
+        public bool ServerTryPickup(NetworkPlayerInventory inv)
+        {
+            if (inv == null) return false;
+            if (_remainingAmount.Value == 0) return false;
 
-            bool added = inv.TryAddItem(itemId, amount);
-            if (!added) return;
+            // Survivors-only (hard rule).
+            var player = inv.GetComponent<NetworkPlayer>();
+            if (player != null && player.Team != Team.Survivor) return false;
 
-            // Despawn pickup across the network.
-            if (NetworkObject != null)
+            int requested = _remainingAmount.Value;
+            int added = inv.AddItemUpTo(itemId, requested);
+            if (added <= 0) return false;
+
+            int remaining = requested - added;
+            _remainingAmount.Value = (byte)Mathf.Clamp(remaining, 0, byte.MaxValue);
+
+            if (_remainingAmount.Value == 0 && NetworkObject != null)
                 ServerManager.Despawn(NetworkObject);
+
+            return true;
         }
     }
 }

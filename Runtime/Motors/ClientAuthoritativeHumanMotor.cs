@@ -210,6 +210,7 @@ namespace RoachRace.Networking
 
             survivorRemoteAnimator.SetPitchAndYaw(_lookRotation.x, _lookRotation.y);
             proceduralAnimationFPSData.lookInput = _lookRotation;
+            proceduralAnimationFPSData.moveInput = move;
         }
 
         private void OnCollisionStay(Collision collision)
