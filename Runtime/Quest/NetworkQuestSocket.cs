@@ -13,7 +13,7 @@ namespace RoachRace.Networking.Quest
         [SerializeField] private ushort requiredItemId;
 
         [Tooltip("How many deposits are required before completion.")]
-        [SerializeField, Min(1)] private byte requiredCount = 1;
+        [SerializeField, Min(1)] private int requiredCount = 1;
 
         [Tooltip("How long a deposit takes once started (server-timed, replicated).")]
         [SerializeField, Min(0.05f)] private float useDurationSeconds = 2.0f;
@@ -22,14 +22,17 @@ namespace RoachRace.Networking.Quest
         [Tooltip("Optional. Door to open when the socket completes.")]
         [SerializeField] private NetworkQuestDoor door;
 
-        private readonly SyncVar<byte> _depositedCount = new(0);
+        private readonly SyncVar<int> _depositedCount = new(0);
         private readonly SyncVar<bool> _busy = new(false);
 
         private readonly SyncTimer _useTimer = new();
 
+        private NetworkPlayerInventory _pendingInventory;
+        private ushort _pendingItemId;
+
         public ushort RequiredItemId => requiredItemId;
-        public byte RequiredCount => requiredCount;
-        public byte DepositedCount => _depositedCount.Value;
+        public int RequiredCount => requiredCount;
+        public int DepositedCount => _depositedCount.Value;
         public bool IsBusy => _busy.Value;
 
         private void Awake()
@@ -102,7 +105,7 @@ namespace RoachRace.Networking.Quest
         }
 
         [Server]
-        public bool ServerBeginDeposit(NetworkPlayerInventory inventory, ushort itemId, out ItemUseFailReason reason)
+        public bool ServerBeginDeposit(NetworkPlayerInventory inventory, ushort itemId, float durationSeconds, out ItemUseFailReason reason)
         {
             if (!ServerCanBeginDeposit(itemId, out reason))
                 return false;
@@ -113,16 +116,21 @@ namespace RoachRace.Networking.Quest
                 return false;
             }
 
-            // Non-interruptible: consume immediately so completion is guaranteed even if the player disconnects.
-            int consumed = inventory.ConsumeByItemId(itemId, amount: 1);
-            if (consumed <= 0)
+            // Validate possession up-front so we don't start an action that cannot finish.
+            if (inventory.GetTotalCountByItemId(itemId) <= 0)
             {
                 reason = ItemUseFailReason.NotInInventory;
                 return false;
             }
 
+            _pendingInventory = inventory;
+            _pendingItemId = itemId;
+
             _busy.Value = true;
-            _useTimer.StartTimer(useDurationSeconds);
+
+            float dur = durationSeconds > 0.01f ? durationSeconds : useDurationSeconds;
+            dur = Mathf.Max(0.05f, dur);
+            _useTimer.StartTimer(dur);
 
             reason = ItemUseFailReason.None;
             return true;
@@ -137,6 +145,25 @@ namespace RoachRace.Networking.Quest
             // Stop any active timer so it cannot finish again.
             if (_useTimer.Remaining > 0f)
                 _useTimer.StopTimer(sendRemaining: false);
+
+            // Consume at completion (no animation events). If the instigator lost the item mid-action,
+            // cancel the deposit without progress.
+            if (_pendingInventory == null)
+            {
+                _busy.Value = false;
+                _pendingItemId = 0;
+                return;
+            }
+
+            int consumed = _pendingInventory.ConsumeByItemId(_pendingItemId, amount: 1);
+            _pendingInventory = null;
+            _pendingItemId = 0;
+
+            if (consumed <= 0)
+            {
+                _busy.Value = false;
+                return;
+            }
 
             _busy.Value = false;
 
