@@ -30,10 +30,6 @@ namespace RoachRace.Networking.Input
 
         private InputAction _boundAction;
 
-        [Header("Aim (for aim-required items)")]
-        [Tooltip("Optional override for aim ray source. If null, uses Camera.main when available, otherwise this transform.")]
-        [SerializeField] private Transform aimTransform;
-
         NetworkPlayerInventory inventory;
 
         private bool _isHeld;
@@ -364,27 +360,8 @@ namespace RoachRace.Networking.Input
             }
 
             // Server-authoritative behavior is handled by NetworkPlayerInventory via RPCs when not server.
-            if (config.UseAimRay && TryGetAimRay(out Vector3 origin, out Vector3 direction))
-                inventory.TryUseByItemId(config.ItemId, origin, direction);
-            else
-                inventory.TryUseByItemId(config.ItemId);
-        }
-
-        private bool TryGetAimRay(out Vector3 origin, out Vector3 direction)
-        {
-            Transform t = aimTransform;
-            if (t == null && Camera.main != null) {
-                t = Camera.main.transform;
-                Debug.LogWarning($"[{nameof(NetworkItemUseInputListener)}] Using Camera.main for aim ray on '{gameObject.name}'. Consider assigning an explicit aimTransform.", gameObject);
-            }
-            if (t == null) {
-                t = transform;
-                Debug.LogWarning($"[{nameof(NetworkItemUseInputListener)}] Using own transform for aim ray on '{gameObject.name}'. Consider assigning an explicit aimTransform.", gameObject);
-            }
-
-            origin = t.position;
-            direction = t.forward;
-            return true;
+            // Aim-driven items read from the replicated NetworkPlayerLookState instead of per-use RPC payloads.
+            inventory.TryUseByItemId(config.ItemId);
         }
 
         private void ResetHoldState()

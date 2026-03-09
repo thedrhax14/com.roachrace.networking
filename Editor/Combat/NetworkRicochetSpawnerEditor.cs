@@ -7,8 +7,6 @@ namespace RoachRace.Networking.Editor.Combat
     [CustomEditor(typeof(NetworkRicochetSpawner))]
     public sealed class NetworkRicochetSpawnerEditor : UnityEditor.Editor
     {
-        private SerializedProperty _rayOrigin;
-        private SerializedProperty _localRayDirection;
         private SerializedProperty _segmentDistance;
         private SerializedProperty _ricochetCount;
         private SerializedProperty _hitMask;
@@ -21,15 +19,13 @@ namespace RoachRace.Networking.Editor.Combat
         private SerializedProperty _traceDestroyAfterSeconds;
         private SerializedProperty _traceStartPoint;
 
-        private SerializedProperty _motor;
+        private SerializedProperty _lookState;
 
         private float _dashLength = 0.45f;
         private float _gapLength = 0.2f;
 
         private void OnEnable()
         {
-            _rayOrigin = serializedObject.FindProperty("rayOrigin");
-            _localRayDirection = serializedObject.FindProperty("localRayDirection");
             _segmentDistance = serializedObject.FindProperty("segmentDistance");
             _ricochetCount = serializedObject.FindProperty("ricochetCount");
             _hitMask = serializedObject.FindProperty("hitMask");
@@ -42,7 +38,7 @@ namespace RoachRace.Networking.Editor.Combat
             _traceDestroyAfterSeconds = serializedObject.FindProperty("traceDestroyAfterSeconds");
             _traceStartPoint = serializedObject.FindProperty("traceStartPoint");
 
-            _motor = serializedObject.FindProperty("_motor");
+            _lookState = serializedObject.FindProperty("lookState");
         }
 
         public override void OnInspectorGUI()
@@ -50,8 +46,6 @@ namespace RoachRace.Networking.Editor.Combat
             serializedObject.Update();
 
             EditorGUILayout.LabelField("Raycast", EditorStyles.boldLabel);
-            EditorGUILayout.PropertyField(_rayOrigin);
-            EditorGUILayout.PropertyField(_localRayDirection);
             EditorGUILayout.PropertyField(_segmentDistance);
             EditorGUILayout.PropertyField(_ricochetCount);
             EditorGUILayout.PropertyField(_hitMask);
@@ -71,7 +65,7 @@ namespace RoachRace.Networking.Editor.Combat
 
             EditorGUILayout.Space(6f);
             EditorGUILayout.LabelField("Dependencies", EditorStyles.boldLabel);
-            EditorGUILayout.PropertyField(_motor);
+            EditorGUILayout.PropertyField(_lookState);
 
             EditorGUILayout.Space(6f);
             EditorGUILayout.LabelField("Scene Preview", EditorStyles.boldLabel);
@@ -116,14 +110,11 @@ namespace RoachRace.Networking.Editor.Combat
             if (spawner == null)
                 return;
 
-            Transform originTransform = spawner.RayOrigin;
-            if (originTransform == null)
-                return;
-
-            Vector3 currentOrigin = originTransform.position;
-            Vector3 currentDirection = originTransform.TransformDirection(spawner.LocalRayDirection);
+            Transform previewTransform = spawner.transform;
+            Vector3 currentOrigin = previewTransform.position;
+            Vector3 currentDirection = previewTransform.forward;
             if (currentDirection.sqrMagnitude < 0.0001f)
-                currentDirection = originTransform.forward;
+                currentDirection = Vector3.forward;
 
             currentDirection.Normalize();
 

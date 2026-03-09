@@ -4,6 +4,7 @@ using FishNet.Object.Synchronizing;
 using KINEMATION.CharacterAnimationSystem.Scripts.Runtime.Core;
 using RoachRace.Controls;
 using RoachRace.Interaction;
+using RoachRace.Networking.Input;
 using RoachRace.UI.Models;
 using UnityEngine;
 
@@ -16,6 +17,7 @@ using InventorySlotState = RoachRace.Data.InventorySlotState;
 namespace RoachRace.Networking.Inventory
 {
     [DisallowMultipleComponent]
+    [RequireComponent(typeof(NetworkPlayerLookState))]
     /// <summary>
     /// Network-authoritative inventory for a player.<br/>
     /// <br/>
@@ -53,6 +55,8 @@ namespace RoachRace.Networking.Inventory
         [SerializeField] private InventoryModel inventoryModel;
         [Tooltip("Optional. If assigned, server will notify owning client about item use failures (reason + slot index) so UI can show feedback.")]
         [SerializeField] private NetworkItemUseFeedbackController itemUseFeedback;
+        [Tooltip("Required. Replicated look state used by aim-driven items so use RPCs do not need per-call aim payloads.")]
+        [SerializeField] private NetworkPlayerLookState lookState;
 
         [Tooltip("Server-authoritative slot list. Do not modify on clients.")]
         public readonly SyncList<InventorySlotState> Slots = new();
@@ -71,14 +75,15 @@ namespace RoachRace.Networking.Inventory
         /// <br/>
         /// Typical behavior:<br/>
         /// - Delegates to <see cref="NetworkItemUseFeedbackController"/> when present.<br/>
+        /// - Logs an error and returns when no feedback controller is available.<br/>
         /// <br/>
-        /// Notes:<br/>
-        /// - If <see cref="itemUseFeedback"/> is not assigned/found, this is a no-op.<br/>
+        /// Expected context:<br/>
+        /// - Used on the server when an item use request fails validation or execution.<br/>
         /// </summary>
         [Server]
         private void ReportUseFailed(ushort itemId, int slotIndex, ItemUseFailReason reason)
         {
-            // Optional dependency: if not present, failure feedback is simply not shown.
+            // Failure feedback is best-effort; log when the feedback controller is missing.
             if (itemUseFeedback == null) {
                 Debug.LogError($"[{nameof(NetworkPlayerInventory)}] Cannot report item use failure because itemUseFeedback is not assigned on '{gameObject.name}'.", gameObject);
                 Debug.LogError($"[{nameof(NetworkPlayerInventory)}] Failed to use itemId {itemId} in slot {slotIndex} for reason '{reason}'.", gameObject);
@@ -91,8 +96,9 @@ namespace RoachRace.Networking.Inventory
         /// Unity lifecycle hook.<br/>
         /// <br/>
         /// Typical behavior:<br/>
-        /// - Ensures <see cref="itemRegistry"/> is assigned (tries to find it on this GameObject or in children).<br/>
-        /// - Attempts to locate <see cref="itemUseFeedback"/> on this GameObject or children.<br/>
+        /// - Ensures <see cref="itemRegistry"/> is assigned by looking on the same GameObject.<br/>
+        /// - Ensures <see cref="lookState"/> is assigned by looking on the same GameObject.<br/>
+        /// - Attempts to locate <see cref="itemUseFeedback"/> in this GameObject's children when it is not explicitly assigned.<br/>
         /// <br/>
         /// Expected context:<br/>
         /// - Runs on all peers (server and clients) because it's a Unity <c>MonoBehaviour</c> lifecycle method.<br/>
@@ -102,6 +108,9 @@ namespace RoachRace.Networking.Inventory
             // PlayerItemRegistry is expected to live on the same GameObject as this component.
             if (itemRegistry == null)
                 TryGetComponent(out itemRegistry);
+
+            if (lookState == null)
+                TryGetComponent(out lookState);
 
             // Auto-wire shared assets from InventoryGlobals when possible.
             if (InventoryGlobals.TryGet(out var globals) && globals != null)
@@ -130,6 +139,13 @@ namespace RoachRace.Networking.Inventory
                     $"[{nameof(NetworkPlayerInventory)}] itemRegistry is null on GameObject '{gameObject.name}'. Add PlayerItemRegistry to the same GameObject.");
             }
 
+            if (lookState == null)
+            {
+                Debug.LogError($"[{nameof(NetworkPlayerInventory)}] NetworkPlayerLookState is not assigned and was not found on '{gameObject.name}'. This component requires a NetworkPlayerLookState on the same GameObject.", gameObject);
+                throw new System.NullReferenceException(
+                    $"[{nameof(NetworkPlayerInventory)}] lookState is null on GameObject '{gameObject.name}'. Add NetworkPlayerLookState to the same GameObject.");
+            }
+
             if (itemDatabase == null)
             {
                 Debug.LogError($"[{nameof(NetworkPlayerInventory)}] ItemDatabase is not assigned on '{gameObject.name}'. Assign it or configure a Resources-based {nameof(InventoryGlobals)} asset.", gameObject);
@@ -144,7 +160,7 @@ namespace RoachRace.Networking.Inventory
                     $"[{nameof(NetworkPlayerInventory)}] inventoryModel is null on GameObject '{gameObject.name}'. Assign an InventoryModel in the Inspector.");
             }
 
-            // Optional: feedback controller can be on this GameObject or a child.
+            // Best-effort auto-wire: feedback controller may live under this object.
             if (itemUseFeedback == null)
                 itemUseFeedback = GetComponentInChildren<NetworkItemUseFeedbackController>(true);
         }
@@ -166,6 +182,9 @@ namespace RoachRace.Networking.Inventory
             // Auto-wire references to reduce per-prefab setup and prevent lost references.
             if (itemRegistry == null)
                 TryGetComponent(out itemRegistry);
+
+            if (lookState == null)
+                TryGetComponent(out lookState);
 
             // Prefer InventoryGlobals when present.
             if (InventoryGlobals.TryGet(out var globals) && globals != null)
@@ -537,36 +556,27 @@ namespace RoachRace.Networking.Inventory
         {
             if (IsServerInitialized)
             {
-                return ServerUseSelected(null, null);
+                return ServerUseSelected();
             }
 
             if (!IsOwner) return false;
+            TryBeginPredictedSelectedUse();
             UseSelectedServerRpc();
             return true;
         }
 
         /// <summary>
-        /// Requests using the currently selected item with client-derived aim data.<br/>
+        /// Requests using the currently selected item.<br/>
         /// <br/>
         /// Typical behavior:<br/>
-        /// - Aim data is forwarded to the server; if the selected item implements <see cref="IRoachRaceAimItem"/>, the server will call <c>SetAim(origin, direction)</c> before use.<br/>
+        /// - If the selected item implements <see cref="IRoachRaceAimItem"/>, aim data is read from <see cref="lookState"/> and applied before use.<br/>
+        /// - If running on the server, use happens immediately.<br/>
+        /// - Otherwise, only the local owner can request use via RPC.<br/>
         /// </summary>
         /// <returns>
         /// <c>true</c> request was accepted/queued (or applied immediately on server).<br/>
         /// <c>false</c> caller is not permitted (non-owner client), or the server-side use failed.<br/>
         /// </returns>
-        public bool TryUseSelected(Vector3 origin, Vector3 direction)
-        {
-            if (IsServerInitialized)
-            {
-                return ServerUseSelected(origin, direction);
-            }
-
-            if (!IsOwner) return false;
-            UseSelectedWithAimServerRpc(origin, direction);
-            return true;
-        }
-
         /// <summary>
         /// Requests stopping use of the currently selected item.<br/>
         /// <br/>
@@ -584,8 +594,36 @@ namespace RoachRace.Networking.Inventory
                 return ServerStopUseSelected();
 
             if (!IsOwner) return false;
+            TryEndPredictedSelectedUse();
             StopUseSelectedServerRpc();
             return true;
+        }
+
+        private void TryBeginPredictedSelectedUse()
+        {
+            if (!IsClientInitialized || !IsOwner)
+                return;
+
+            if (!TryGetSelectedItem(out var item) || item == null)
+                return;
+
+            if (item is IRoachRaceAimItem aimItem && TryGetLookAim(preferLocal: true, out var aimOrigin, out var aimDirection))
+                aimItem.SetAim(aimOrigin, aimDirection);
+
+            if (item is ILocalPredictedUseItem predictedItem)
+                predictedItem.BeginPredictedUse();
+        }
+
+        private void TryEndPredictedSelectedUse()
+        {
+            if (!IsClientInitialized || !IsOwner)
+                return;
+
+            if (!TryGetSelectedItem(out var item) || item == null)
+                return;
+
+            if (item is ILocalPredictedUseItem predictedItem)
+                predictedItem.EndPredictedUse();
         }
 
         /// <summary>
@@ -608,7 +646,7 @@ namespace RoachRace.Networking.Inventory
 
             if (IsServerInitialized)
             {
-                return ServerUseByItemId(itemId, null, null);
+                return ServerUseByItemId(itemId);
             }
 
             if (!IsOwner) return false;
@@ -617,10 +655,12 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
-        /// Requests using the first available stack/slot matching <paramref name="itemId"/> with aim data.<br/>
+        /// Requests using the first available stack/slot matching <paramref name="itemId"/>.<br/>
         /// <br/>
         /// Typical behavior:<br/>
-        /// - Aim data is forwarded to the server; if the item implements <see cref="IRoachRaceAimItem"/>, the server will call <c>SetAim(origin, direction)</c> before use.<br/>
+        /// - If the item implements <see cref="IRoachRaceAimItem"/>, aim data is read from <see cref="lookState"/> and applied before use.<br/>
+        /// - If running on the server, use happens immediately.<br/>
+        /// - Otherwise, only the local owner can request use via RPC.<br/>
         /// <br/>
         /// Notes:<br/>
         /// - The server performs validation via <see cref="CanUseByItemId"/> and will return <c>false</c> if unusable.<br/>
@@ -629,17 +669,23 @@ namespace RoachRace.Networking.Inventory
         /// <c>true</c> request was accepted/queued (or applied immediately on server).<br/>
         /// <c>false</c> invalid <paramref name="itemId"/> (0), caller is not permitted (non-owner client), or the server-side use failed.<br/>
         /// </returns>
-        public bool TryUseByItemId(ushort itemId, Vector3 origin, Vector3 direction)
+        private bool TryGetLookAim(bool preferLocal, out Vector3 origin, out Vector3 direction)
         {
-            if (itemId == 0) return false;
+            return lookState.TryGetLook(out origin, out direction, preferLocal);
+        }
 
-            if (IsServerInitialized)
+        private bool TryApplyAimFromLookState(IRoachRaceItem item, bool preferLocal, int slotIndex, ushort itemId)
+        {
+            if (item is not IRoachRaceAimItem aimItem)
+                return true;
+
+            if (!TryGetLookAim(preferLocal, out var origin, out var direction))
             {
-                return ServerUseByItemId(itemId, origin, direction);
+                ReportUseFailed(itemId, slotIndex, ItemUseFailReason.RequiresAimData);
+                return false;
             }
 
-            if (!IsOwner) return false;
-            UseByItemIdWithAimServerRpc(itemId, origin, direction);
+            aimItem.SetAim(origin, direction);
             return true;
         }
 
@@ -690,16 +736,7 @@ namespace RoachRace.Networking.Inventory
         [ServerRpc(RequireOwnership = true)]
         private void UseSelectedServerRpc()
         {
-            ServerUseSelected(null, null);
-        }
-
-        /// <summary>
-        /// Owner-to-server RPC to request using the currently selected item with aim data.<br/>
-        /// </summary>
-        [ServerRpc(RequireOwnership = true)]
-        private void UseSelectedWithAimServerRpc(Vector3 origin, Vector3 direction)
-        {
-            ServerUseSelected(origin, direction);
+            ServerUseSelected();
         }
 
         /// <summary>
@@ -750,16 +787,7 @@ namespace RoachRace.Networking.Inventory
         [ServerRpc(RequireOwnership = true)]
         private void UseByItemIdServerRpc(ushort itemId)
         {
-            ServerUseByItemId(itemId, null, null);
-        }
-
-        /// <summary>
-        /// Owner-to-server RPC to request using an item by its definition id with aim data.<br/>
-        /// </summary>
-        [ServerRpc(RequireOwnership = true)]
-        private void UseByItemIdWithAimServerRpc(ushort itemId, Vector3 origin, Vector3 direction)
-        {
-            ServerUseByItemId(itemId, origin, direction);
+            ServerUseByItemId(itemId);
         }
 
         /// <summary>
@@ -781,7 +809,7 @@ namespace RoachRace.Networking.Inventory
         /// <c>false</c> invalid id, unusable, missing registry/component, or no available stack.<br/>
         /// </returns>
         [Server]
-        private bool ServerUseByItemId(ushort itemId, Vector3? aimOrigin, Vector3? aimDirection)
+        private bool ServerUseByItemId(ushort itemId)
         {
             if (itemId == 0)
             {
@@ -831,8 +859,8 @@ namespace RoachRace.Networking.Inventory
 
             // Some items rely on client-derived aim data (e.g., raycast from camera).
             // Apply aim BEFORE gating so gate implementations can validate the aimed target.
-            if (aimOrigin.HasValue && aimDirection.HasValue && item is IRoachRaceAimItem aimItemPreGate)
-                aimItemPreGate.SetAim(aimOrigin.Value, aimDirection.Value);
+            if (!TryApplyAimFromLookState(item, preferLocal: false, slotIndex, itemId))
+                return false;
 
             // Optional server-side gating hook.
             if (item is IServerItemUseGate gate && !gate.CanStartUse(this, slotIndex, out var gateReason))
@@ -846,8 +874,8 @@ namespace RoachRace.Networking.Inventory
 
             // Aim may have already been set above for gating; set again here to ensure the current use context
             // sees the latest values even if the item overwrote aim during gating.
-            if (aimOrigin.HasValue && aimDirection.HasValue && item is IRoachRaceAimItem aimItem)
-                aimItem.SetAim(aimOrigin.Value, aimDirection.Value);
+            if (!TryApplyAimFromLookState(item, preferLocal: false, slotIndex, itemId))
+                return false;
 
             item.UseStart();
 
@@ -1191,7 +1219,7 @@ namespace RoachRace.Networking.Inventory
     /// <c>false</c> selected slot invalid/empty, missing registry/component, or otherwise not usable.<br/>
     /// </returns>
         [Server]
-        private bool ServerUseSelected(Vector3? aimOrigin, Vector3? aimDirection)
+        private bool ServerUseSelected()
         {
             int idx = _selectedSlotIndex.Value;
             if (idx < 0 || idx >= Slots.Count)
@@ -1220,8 +1248,8 @@ namespace RoachRace.Networking.Inventory
 
             // Some items rely on client-derived aim data (e.g., raycast from camera).
             // Apply aim BEFORE gating so gate implementations can validate the aimed target.
-            if (aimOrigin.HasValue && aimDirection.HasValue && item is IRoachRaceAimItem aimItemPreGate)
-                aimItemPreGate.SetAim(aimOrigin.Value, aimDirection.Value);
+            if (!TryApplyAimFromLookState(item, preferLocal: false, idx, slot.ItemId))
+                return false;
 
             // Optional server-side gating hook.
             if (item is IServerItemUseGate gate && !gate.CanStartUse(this, idx, out var gateReason))
@@ -1235,8 +1263,8 @@ namespace RoachRace.Networking.Inventory
 
             // Aim may have already been set above for gating; set again here to ensure the current use context
             // sees the latest values even if the item overwrote aim during gating.
-            if (aimOrigin.HasValue && aimDirection.HasValue && item is IRoachRaceAimItem aimItem)
-                aimItem.SetAim(aimOrigin.Value, aimDirection.Value);
+            if (!TryApplyAimFromLookState(item, preferLocal: false, idx, slot.ItemId))
+                return false;
 
             item.UseStart();
 
@@ -1250,10 +1278,7 @@ namespace RoachRace.Networking.Inventory
                 SetSelectionVisualsObserversRpc(idx);
             }
 
-            if (aimOrigin.HasValue && aimDirection.HasValue)
-                UseItemWithAimObserversRpc(slot.ItemId, seed, aimOrigin.Value, aimDirection.Value);
-            else
-                UseItemObserversRpc(slot.ItemId, seed);
+            UseItemObserversRpc(slot.ItemId, seed);
 
             // If the item is consumable, it can call back into inventory removal itself later.
             // For now, keycard/heal items already manage their own charges; inventory count represents possession.
@@ -1347,29 +1372,8 @@ namespace RoachRace.Networking.Inventory
             if (!itemRegistry.TryGetItem(itemId, out var item)) return;
 
             item.InitializeUseContext(seed, OwnerId, false, gameObject);
-            item.UseStart();
-        }
-
-        /// <summary>
-    /// Server-to-observers RPC that plays item use on observing clients with aim data.<br/>
-    ///<br/>
-    /// Typical behavior:<br/>
-    /// - Re-initializes use context for deterministic playback.<br/>
-    /// - If the item implements <see cref="IRoachRaceAimItem"/>, applies aim and then calls <c>UseStart()</c>.<br/>
-    ///<br/>
-    /// Expected context:<br/>
-    /// - Runs on clients which are observing this NetworkObject (server excluded).<br/>
-        /// </summary>
-        [ObserversRpc(ExcludeServer = true)]
-        private void UseItemWithAimObserversRpc(ushort itemId, int seed, Vector3 origin, Vector3 direction)
-        {
-            if (itemRegistry == null) return;
-            if (!itemRegistry.TryGetItem(itemId, out var item)) return;
-
-            item.InitializeUseContext(seed, OwnerId, false, gameObject);
-            if (item is IRoachRaceAimItem aimItem)
-                aimItem.SetAim(origin, direction);
-
+            if (item is IRoachRaceAimItem)
+                TryApplyAimFromLookState(item, preferLocal: false, slotIndex: -1, itemId);
             item.UseStart();
         }
     }

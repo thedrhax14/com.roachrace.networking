@@ -300,13 +300,7 @@ namespace RoachRace.Networking.Input
 
             // Only trigger on rising edge.
             if (pressed && !_useWasPressed)
-            {
-                var cam = Camera.main;
-                if (cam != null)
-                    _inventory.TryUseSelected(cam.transform.position, cam.transform.forward);
-                else
-                    _inventory.TryUseSelected(transform.position, transform.forward);
-            }
+                _inventory.TryUseSelected();
 
             // Trigger stop on falling edge.
             if (!pressed && _useWasPressed)

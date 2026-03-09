@@ -42,7 +42,13 @@ namespace RoachRace.Networking
             Debug.Log($"[{nameof(ServerAuthMonsterController)}] OnOwnershipServer called. Previous OwnerId: {prevOwner?.ClientId}, New OwnerId: {OwnerId}", gameObject);
             if(prevOwner.ClientId != -1)
             {
-                _originalGhostController.transform.SetPositionAndRotation(Camera.main.transform.position, Camera.main.transform.rotation);
+                if (_originalGhostController != null && _originalGhostController.TryGetLook(out Vector3 origin, out Vector3 direction, preferLocal: false))
+                {
+                    Quaternion rotation = direction.sqrMagnitude > 0.0001f
+                        ? Quaternion.LookRotation(direction.normalized, Vector3.up)
+                        : _originalGhostController.transform.rotation;
+                    _originalGhostController.transform.SetPositionAndRotation(origin, rotation);
+                }
                 _originalGhostController.GiveOwnership(prevOwner);
                 GiveOwnership(null);
             }

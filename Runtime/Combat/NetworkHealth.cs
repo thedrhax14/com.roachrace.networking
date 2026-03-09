@@ -119,8 +119,11 @@ namespace RoachRace.Networking.Combat
             {
                 _currentHealth.Value = newHealth;
                 
-                // 1. Publish damage event for UI visualization (damage popups, etc)
-                PublishDamageEvent(damageInfo, newHealth <= 0, newHealth);
+                // 1. Publish damage event for UI visualization (damage popups, etc).
+                // Host can publish locally in-process; remote clients receive the mirrored RPC below.
+                if (IsClientInitialized)
+                    PublishDamageEventLocal(damageInfo, newHealth <= 0, newHealth);
+                PublishDamageEventObserversRpc(damageInfo, newHealth <= 0, newHealth, Time.time);
                 
                 // 2. Notify clients about the hit (for particles/sounds)
                 RpcOnHit(damageInfo);
@@ -137,7 +140,7 @@ namespace RoachRace.Networking.Combat
         }
 
         [Server]
-        private void PublishDamageEvent(DamageInfo damageInfo, bool isFatal, int remainingHealth)
+        private void PublishDamageEventLocal(DamageInfo damageInfo, bool isFatal, int remainingHealth, float eventTime = -1f)
         {
             if (damageEventModel == null)
             {
@@ -153,10 +156,16 @@ namespace RoachRace.Networking.Combat
                 DamagePosition = transform.position,
                 IsFatal = isFatal,
                 VictimRemainingHealth = remainingHealth,
-                EventTime = Time.time
+                EventTime = eventTime >= 0f ? eventTime : Time.time
             };
 
             damageEventModel.PublishDamageEvent(damageEvent);
+        }
+
+        [ObserversRpc(ExcludeServer = true)]
+        private void PublishDamageEventObserversRpc(DamageInfo damageInfo, bool isFatal, int remainingHealth, float eventTime)
+        {
+            PublishDamageEventLocal(damageInfo, isFatal, remainingHealth, eventTime);
         }
 
         [Server]

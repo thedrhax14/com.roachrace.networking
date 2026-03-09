@@ -18,9 +18,6 @@ namespace RoachRace.Networking.Input
         [Tooltip("If not assigned, will search on the same GameObject at runtime.")]
         [SerializeField] private NetworkWorldPickupInteractor pickupInteractor;
 
-        [Tooltip("Optional. Used for the aim ray; falls back to Camera.main or this transform.")]
-        [SerializeField] private Transform aimTransform;
-
         private InputAction _boundAction;
 
         public override void OnStartClient()
@@ -104,23 +101,7 @@ namespace RoachRace.Networking.Input
             if (ctx.phase != InputActionPhase.Performed) return;
             if (value < config.PressedThreshold) return;
 
-            if (!TryGetAimRay(out Vector3 origin, out Vector3 direction))
-                return;
-
-            pickupInteractor.TryPickup(origin, direction);
-        }
-
-        private bool TryGetAimRay(out Vector3 origin, out Vector3 direction)
-        {
-            Transform t = aimTransform;
-            if (t == null && Camera.main != null)
-                t = Camera.main.transform;
-            if (t == null)
-                t = transform;
-
-            origin = t.position;
-            direction = t.forward;
-            return true;
+            pickupInteractor.TryPickup();
         }
     }
 }

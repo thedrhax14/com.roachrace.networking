@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using RoachRace.Networking.Input;
 using UnityEngine;
 
 namespace RoachRace.Networking.Combat
@@ -13,8 +14,6 @@ namespace RoachRace.Networking.Combat
     public sealed class NetworkRicochetSpawner : MonoBehaviour
     {
         [Header("Raycast")]
-        [SerializeField] private Transform rayOrigin;
-        [SerializeField] private Vector3 localRayDirection = Vector3.forward;
         [SerializeField] private float segmentDistance = 25f;
         [SerializeField] private int ricochetCount = 3;
         [SerializeField] private LayerMask hitMask = ~0;
@@ -30,10 +29,8 @@ namespace RoachRace.Networking.Combat
         [SerializeField] private Transform traceStartPoint;
 
         [Header("Dependencies")]
-        [SerializeField] private ClientAuthoritativeHumanMotor _motor;
+        [SerializeField] private NetworkPlayerLookState lookState;
 
-        public Transform RayOrigin => rayOrigin != null ? rayOrigin : transform;
-        public Vector3 LocalRayDirection => localRayDirection;
         public float SegmentDistance => segmentDistance;
         public int RicochetCount => ricochetCount;
         public LayerMask HitMask => hitMask;
@@ -44,10 +41,13 @@ namespace RoachRace.Networking.Combat
 #if UNITY_SERVER && !UNITY_EDITOR
             return;
 #else
-            Vector3 origin = RayOrigin.position;
-            Vector3 direction = _motor.AimRotation * localRayDirection;
-
             ValidateCriticalDependencies();
+
+            if (!lookState.TryGetLook(out Vector3 origin, out Vector3 direction))
+            {
+                Debug.LogError($"[{nameof(NetworkRicochetSpawner)}] Failed to resolve shared aim data from {nameof(NetworkPlayerLookState)} on '{gameObject.name}'.", gameObject);
+                throw new System.InvalidOperationException($"[{nameof(NetworkRicochetSpawner)}] Could not resolve look origin/direction from {nameof(NetworkPlayerLookState)} on GameObject '{gameObject.name}'.");
+            }
 
             List<Vector3> rayOrigins = new(ricochetCount + 1);
             List<RaycastHit> hits = new(ricochetCount + 1);
@@ -144,6 +144,17 @@ namespace RoachRace.Networking.Combat
 
         private void ValidateCriticalDependencies()
         {
+            if (lookState == null)
+            {
+                lookState = GetComponentInParent<NetworkPlayerLookState>();
+            }
+
+            if (lookState == null)
+            {
+                Debug.LogError($"[{nameof(NetworkRicochetSpawner)}] lookState is not assigned! Please assign it in the Inspector or place {nameof(NetworkPlayerLookState)} on a parent object.", gameObject);
+                throw new System.NullReferenceException($"[{nameof(NetworkRicochetSpawner)}] lookState is null on GameObject '{gameObject.name}'. This component requires access to {nameof(NetworkPlayerLookState)} for shared aim data.");
+            }
+
             if (traceLinePrefab == null)
             {
                 Debug.LogError($"[{nameof(NetworkRicochetSpawner)}] traceLinePrefab is not assigned! Please assign it in the Inspector.", gameObject);

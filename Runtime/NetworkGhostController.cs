@@ -1,6 +1,7 @@
 using FishNet.Connection;
 using FishNet.Object;
 using RoachRace.Controls;
+using RoachRace.Networking.Input;
 using UnityEngine;
 
 namespace RoachRace.Networking
@@ -9,6 +10,7 @@ namespace RoachRace.Networking
     {
         [Header("Dependencies")]
         public GhostCameraController cameraController;
+        [SerializeField] private NetworkPlayerLookState lookState;
 
         [Header("Movement Settings")]
         [SerializeField] private float flySpeed = 10f;
@@ -18,6 +20,18 @@ namespace RoachRace.Networking
 
         private bool _isRunning;
         public Vector2 _lookInput = Vector2.zero;
+
+        private void Awake()
+        {
+            if (lookState == null)
+                TryGetComponent(out lookState);
+
+            if (lookState == null)
+            {
+                Debug.LogError($"[{nameof(NetworkGhostController)}] {nameof(NetworkPlayerLookState)} is not assigned on '{gameObject.name}'.", gameObject);
+                throw new System.NullReferenceException($"[{nameof(NetworkGhostController)}] lookState is null on GameObject '{gameObject.name}'. Add {nameof(NetworkPlayerLookState)} to the same GameObject.");
+            }
+        }
 
         public override void OnOwnershipClient(NetworkConnection prevOwner)
         {
@@ -95,15 +109,18 @@ namespace RoachRace.Networking
         {
             if (!IsOwner) return;
 
-            Vector3 origin = Camera.main.transform.position;
-            Vector3 direction = Camera.main.transform.forward;
-
-            InteractServerRPC(origin, direction);
+            InteractServerRPC();
         }
 
         [ServerRpc]
-        void InteractServerRPC(Vector3 origin, Vector3 direction, NetworkConnection sender = null)
+        void InteractServerRPC(NetworkConnection sender = null)
         {
+            if (!lookState.TryGetLook(out Vector3 origin, out Vector3 direction, preferLocal: false))
+            {
+                Debug.LogError($"[{nameof(NetworkGhostController)}] Failed to resolve aim data from {nameof(NetworkPlayerLookState)} on '{gameObject.name}'.", gameObject);
+                return;
+            }
+
             if (Physics.Raycast(origin, direction, out RaycastHit hit, 5f))
             {
                 GameObject hitObject = hit.collider.gameObject;
@@ -130,6 +147,18 @@ namespace RoachRace.Networking
         public void Rotate(Vector2 lookInput) { }
 
         public void OnChangeItem() { }
+
+        public bool TryGetLook(out Vector3 origin, out Vector3 direction, bool preferLocal = true)
+        {
+            if (lookState == null)
+            {
+                origin = default;
+                direction = default;
+                return false;
+            }
+
+            return lookState.TryGetLook(out origin, out direction, preferLocal);
+        }
 
         public Transform GetCameraTransform()
         {
