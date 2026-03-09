@@ -1,4 +1,3 @@
-using FishNet.Managing.Timing;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
 using FishNet.Utility.Template;
@@ -7,32 +6,8 @@ using UnityEngine;
 namespace RoachRace.Networking.Quest
 {
     [DisallowMultipleComponent]
-    public sealed class NetworkQuestDoor : TickNetworkBehaviour
+    public sealed class NetworkQuestDoor : NetworkDoorAnimatorBase
     {
-        private enum DoorState : byte
-        {
-            Locked = 0,
-            Opening = 1,
-            Open = 2,
-        }
-
-        [Header("Presentation (Optional)")]
-        [Tooltip("Optional Animator which drives door open/close visuals.")]
-        [SerializeField] private Animator animator;
-
-        [Tooltip("Optional. Animator bool parameter set to true when the door is open (or opening).")]
-        [SerializeField] private string openBoolParameter = "IsOpen";
-
-        [Tooltip("Optional. Animator state name used to play/seek the door opening animation.")]
-        [SerializeField] private string openStateName = "Open";
-
-        [Tooltip("Animator layer index used for Play/seek.")]
-        [SerializeField, Min(0)] private int animatorLayer = 0;
-
-        [Header("Timing")]
-        [Tooltip("Duration (seconds) of the door opening animation. Used for client catch-up/fast-forward.")]
-        [SerializeField, Min(0.05f)] private float openDurationSeconds = 1.0f;
-
         private readonly SyncVar<DoorState> _state = new(DoorState.Locked);
         private readonly SyncVar<uint> _openStartTick = new(0u);
 
@@ -92,15 +67,6 @@ namespace RoachRace.Networking.Quest
             ApplyPresentationForCurrentState();
         }
 
-        private uint GetOpenDurationTicks()
-        {
-            if (TimeManager == null)
-                return 0u;
-
-            uint ticks = TimeManager.TimeToTicks(openDurationSeconds, TickRounding.RoundUp);
-            return ticks == 0u ? 1u : ticks;
-        }
-
         private float GetOpeningNormalizedTime()
         {
             if (TimeManager == null)
@@ -121,31 +87,9 @@ namespace RoachRace.Networking.Quest
 
         private void ApplyPresentationForCurrentState()
         {
-            if (animator == null)
-                return;
-
             DoorState state = _state.Value;
-            bool shouldBeOpenBool = state != DoorState.Locked;
-
-            if (!string.IsNullOrWhiteSpace(openBoolParameter))
-                animator.SetBool(openBoolParameter, shouldBeOpenBool);
-
-            if (state == DoorState.Locked)
-            {
-                // Leave the Animator to whatever its controller does for "closed".
-                animator.speed = 1f;
-                return;
-            }
-
-            // Deterministic pose: pause and seek to the authoritative progress.
-            animator.speed = 0f;
-
-            float normalized = state == DoorState.Open ? 1f : GetOpeningNormalizedTime();
-            if (!string.IsNullOrWhiteSpace(openStateName))
-            {
-                animator.Play(openStateName, animatorLayer, normalized);
-                animator.Update(0f);
-            }
+            float openingNormalized = state == DoorState.Open ? 1f : GetOpeningNormalizedTime();
+            ApplyDoorPresentation(state, openingNormalized);
         }
 
         [Server]
