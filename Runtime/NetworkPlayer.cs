@@ -22,13 +22,13 @@ namespace RoachRace.Networking
         [SerializeField] private GamePlayersModel gamePlayersModel;
 
         [Header("Player Data")]
-        private readonly SyncVar<string> playerName = new("Player");
+        public readonly SyncVar<string> playerName = new("Player");
 
-        private readonly SyncVar<Team> team = new(Team.Survivor);
-        private readonly SyncVar<long> ping = new(0);
+        public readonly SyncVar<Team> team = new(Team.Survivor);
+        public readonly SyncVar<long> ping = new(0);
 
-        private readonly SyncVar<string> imageUrl = new("");
-        private Player _playerData;
+        public readonly SyncVar<string> imageUrl = new("");
+        public Player _playerData;
 
         #region NetworkBehaviour Lifecycle
 

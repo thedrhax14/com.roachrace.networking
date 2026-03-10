@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -7,6 +8,7 @@ using FishNet.Object.Synchronizing;
 using RoachRace.Controls;
 using RoachRace.Data;
 using RoachRace.UI.Models;
+using UnityEditor.EditorTools;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.Serialization;
@@ -27,13 +29,16 @@ namespace RoachRace.Networking.Combat
         private readonly SyncVar<int> _maxHealth = new(100);
         private readonly SyncVar<int> _currentHealth = new(100);
         [Header("Death/Despawn Settings")]
-        NetworkObject objectToDespawn;
+        [Tooltip("NetworkObject to despawn on death. If null, will attempt to find a NetworkObject in parent hierarchy.")]
+        public NetworkObject objectToDespawn;
         [Tooltip("Optional NetworkObject to spawn on death (e.g., explosion effect).")]
         public NetworkObject objectToSpawn;
         [Header("Events")]
         // Events for UI, Effects, and Logic
         public UnityEvent<DamageInfo> OnDamaged; // Called on Server and Client (via RPC)
         public UnityEvent<int, int> OnHealthChanged; // current, max
+
+        private readonly HashSet<INetworkHealthServerDeathObserver> _serverDeathObservers = new();
         
         [Header("Dependencies")]
         [SerializeField] private DamageEventModel damageEventModel;
@@ -74,6 +79,32 @@ namespace RoachRace.Networking.Combat
 
             if (objectToDespawn == null) objectToDespawn = GetComponentInParent<NetworkObject>();
             if (objectToDespawn == null) throw new System.NullReferenceException($"[{nameof(NetworkHealth)}] 'objectToDespawn' is not assigned on '{gameObject.name}'. It is required to despawn the object on death.");
+        }
+
+        /// <summary>
+        /// Subscribes an observer to the server-only death notification.<br>
+        /// Typical usage: server-side controller/respawn systems call this after spawning a controller to be notified when death handling begins.<br>
+        /// Server/client constraints: this notification is server-only and will never be invoked on clients.
+        /// </summary>
+        /// <param name="observer">Observer to register; duplicates are ignored.</param>
+        [Server]
+        public void AddServerDeathObserver(INetworkHealthServerDeathObserver observer)
+        {
+            if (observer == null) return;
+            _serverDeathObservers.Add(observer);
+        }
+
+        /// <summary>
+        /// Unsubscribes an observer from the server-only death notification.<br>
+        /// Typical usage: called when swapping controllers or tearing down server-side systems to avoid leaks.<br>
+        /// Server/client constraints: server-only.
+        /// </summary>
+        /// <param name="observer">Observer to unregister.</param>
+        [Server]
+        public void RemoveServerDeathObserver(INetworkHealthServerDeathObserver observer)
+        {
+            if (observer == null) return;
+            _serverDeathObservers.Remove(observer);
         }
 
         public override void OnStartClient()
@@ -142,10 +173,11 @@ namespace RoachRace.Networking.Combat
         [Server]
         private void PublishDamageEventLocal(DamageInfo damageInfo, bool isFatal, int remainingHealth, float eventTime = -1f)
         {
+            // TODO currently null damageEventModel is silently ignored, but we should consider adding a fallback (eg direct event) to ensure damage events are always published for UI and effects. For now we log a warning to catch missing references.
             if (damageEventModel == null)
             {
-                Debug.LogWarning($"[{nameof(NetworkHealth)}] DamageEventModel is not assigned on '{gameObject.name}'. Damage events will not be published.", gameObject);
-                Debug.Log($"[{nameof(NetworkHealth)}] DamageInfo: Amount={damageInfo.Amount}, Type={damageInfo.Type}, InstigatorId={damageInfo.InstigatorId}", gameObject);
+                // Debug.LogWarning($"[{nameof(NetworkHealth)}] DamageEventModel is not assigned on '{gameObject.name}'. Damage events will not be published.", gameObject);
+                // Debug.Log($"[{nameof(NetworkHealth)}] DamageInfo: Amount={damageInfo.Amount}, Type={damageInfo.Type}, InstigatorId={damageInfo.InstigatorId}", gameObject);
                 return;
             }
 
@@ -171,7 +203,11 @@ namespace RoachRace.Networking.Combat
         [Server]
         void StartHandleDeath(DamageInfo damageInfo)
         {
-            DeathLogBroadcaster.Instance?.ServerPublishDeath(this, damageInfo);
+            foreach (var observer in _serverDeathObservers.ToArray()) {
+                Debug.Log($"[{nameof(NetworkHealth)}] Notifying server death observer {observer.GetType().Name} of death on '{gameObject.name}'");
+                observer.OnNetworkHealthServerDied(this, damageInfo);
+            }
+            DeathLogBroadcaster.Instance.ServerPublishDeath(this, damageInfo);
 
             bool waitForOwnershipTransfer = objectToDespawn.OwnerId != -1;
             objectToDespawn.GiveOwnership(null);

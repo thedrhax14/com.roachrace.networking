@@ -259,6 +259,7 @@ namespace RoachRace.Networking
                 lookAction.action.performed -= LookAction_Performed;
                 lookAction.action.Disable();
             }
+            Destroy(_characterCamera.gameObject);
         }
     }
 }

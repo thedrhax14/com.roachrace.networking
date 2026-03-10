@@ -127,9 +127,15 @@ namespace RoachRace.Networking
                 return;
             }
 
-            // Respawn logic would go here (handled by your respawn system)
+            var lifecycle = GetComponent<NetworkPlayerControllerLifecycle>();
+            if (lifecycle == null)
+            {
+                Debug.LogError($"[NetworkPlayerStats] Missing {nameof(NetworkPlayerControllerLifecycle)} - cannot respawn.", gameObject);
+                return;
+            }
+
             spawnTime = Time.time;
-            Debug.Log($"[NetworkPlayerStats] Player {OwnerId} respawned");
+            lifecycle.ServerRequestRespawn();
         }
 
         /// <summary>

@@ -1,9 +1,12 @@
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
+using FishNet.Managing.Scened;
+using FishNet.Transporting;
 using RoachRace.Data;
 using RoachRace.UI.Models;
 using RoachRace.UI.Components;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using System.Collections.Generic;
 using System.Linq;
 using RoachRace.UI.Core;
@@ -19,6 +22,10 @@ namespace RoachRace.Networking
         [Header("Dependencies")]
         [SerializeField] private GameStateModel gameStateModel;
 
+        [Header("Scenes")]
+        [Tooltip("Additive gameplay scene to load/unload using FishNet SceneManager (eg contains RoachRaceNetMapGen).")]
+        [SerializeField] private string mapGenSceneName = "MapGen";
+
         [Header("Game Settings")]
         [SerializeField] private int maxRespawns = 3;
         [SerializeField] private float gameStartDelaySeconds = 3f;
@@ -33,6 +40,7 @@ namespace RoachRace.Networking
         
         private float gameStartTime;
         private Dictionary<int, NetworkPlayerStats> playerStatsMap = new();
+        private bool _mapGenSceneRequested;
 
         public override void OnStartServer()
         {
@@ -81,6 +89,10 @@ namespace RoachRace.Networking
             
             // Register with GameOverWindow
             RegisterWithGameOverWindow();
+
+            // Ensure MapGen is unloaded locally when disconnecting, since MainMenu is UI-only.
+            ClientManager.OnClientConnectionState -= OnClientConnectionState;
+            ClientManager.OnClientConnectionState += OnClientConnectionState;
         }
 
         public override void OnStopClient()
@@ -91,6 +103,8 @@ namespace RoachRace.Networking
             currentState.OnChange -= OnGameStateChanged;
             allPlayerStats.OnChange -= OnPlayerStatsChanged;
             gameStartTimestampMs.OnChange -= OnGameStartTimestampChanged;
+
+            ClientManager.OnClientConnectionState -= OnClientConnectionState;
             
             Debug.Log("[NetworkGameManager] Client stopped - Unsubscribed from events");
         }
@@ -175,6 +189,10 @@ namespace RoachRace.Networking
                 allPlayerStats.Add(kvp.Value.GetPlayerStats());
             }
 
+            ServerLoadMapGenSceneIfNeeded();
+
+            ServerHandleGameStartSpawns();
+
             Debug.Log($"[{nameof(NetworkGameManager)}] <color=cyan>DEV</color>: Immediate start with {allPlayerStats.Count} players");
         }
 
@@ -212,6 +230,10 @@ namespace RoachRace.Networking
                 kvp.Value.ResetStats();
                 allPlayerStats.Add(kvp.Value.GetPlayerStats());
             }
+
+            ServerLoadMapGenSceneIfNeeded();
+
+            ServerHandleGameStartSpawns();
             
             // Server-specific initialization (map generation, etc.)
             Debug.Log($"[{nameof(NetworkGameManager)}] SERVER: Game started with {allPlayerStats.Count} players - Starting map generation...");
@@ -219,6 +241,85 @@ namespace RoachRace.Networking
             
             if(!Application.isEditor) gameStateModel.SetGameState(currentState.Value);
             Debug.Log($"[{nameof(NetworkGameManager)}] Game started with {allPlayerStats.Count} players");
+        }
+
+        [Server]
+        private void ServerHandleGameStartSpawns()
+        {
+            var roomManager = FindFirstObjectByType<NetworkRoomManager>();
+            if (roomManager != null)
+                roomManager.NetworkObject.RemoveOwnership();
+
+            var spawner = FindFirstObjectByType<RoachRacePlayerSpawner>();
+            if (spawner != null)
+                spawner.ResetSpawnIndices();
+
+            var lifecycles = FindObjectsByType<NetworkPlayerControllerLifecycle>(FindObjectsSortMode.None);
+            foreach (var lifecycle in lifecycles)
+                lifecycle.ServerSpawnControllerForCurrentTeam();
+        }
+
+        /// <summary>
+        /// Loads the configured MapGen scene additively for all connections using FishNet SceneManager.<br>
+        /// Typical usage: called when the match transitions into InProgress so MapGen objects exist only during gameplay.<br>
+        /// Server/client constraints: server-only; clients follow the server's scene load.
+        /// </summary>
+        [Server]
+        private void ServerLoadMapGenSceneIfNeeded()
+        {
+            if (_mapGenSceneRequested)
+                return;
+
+            if (string.IsNullOrWhiteSpace(mapGenSceneName))
+                return;
+
+            _mapGenSceneRequested = true;
+
+            var sld = new SceneLoadData(mapGenSceneName)
+            {
+                ReplaceScenes = ReplaceOption.None
+            };
+
+            SceneManager.LoadGlobalScenes(sld);
+        }
+
+        /// <summary>
+        /// Unloads the configured MapGen scene for all connections using FishNet SceneManager.<br>
+        /// Typical usage: called when leaving gameplay back to menu so generated content is destroyed without manual cleanup.<br>
+        /// Server/client constraints: server-only; clients follow the server's unload.
+        /// </summary>
+        [Server]
+        private void ServerUnloadMapGenSceneIfLoaded()
+        {
+            if (!_mapGenSceneRequested)
+                return;
+
+            if (string.IsNullOrWhiteSpace(mapGenSceneName))
+                return;
+
+            _mapGenSceneRequested = false;
+            var sud = new SceneUnloadData(mapGenSceneName);
+            SceneManager.UnloadGlobalScenes(sud);
+        }
+
+        private void OnClientConnectionState(ClientConnectionStateArgs args)
+        {
+            if (args.ConnectionState != LocalConnectionState.Stopped)
+                return;
+
+            ClientUnloadMapGenSceneIfLoaded();
+        }
+
+        private void ClientUnloadMapGenSceneIfLoaded()
+        {
+            if (string.IsNullOrWhiteSpace(mapGenSceneName))
+                return;
+
+            var scene = UnityEngine.SceneManagement.SceneManager.GetSceneByName(mapGenSceneName);
+            if (!scene.IsValid() || !scene.isLoaded)
+                return;
+
+            UnityEngine.SceneManagement.SceneManager.UnloadSceneAsync(mapGenSceneName);
         }
 
         /// <summary>
@@ -296,6 +397,8 @@ namespace RoachRace.Networking
             yield return new WaitForSeconds(10f);
             
             Debug.Log("[NetworkGameManager] Shutting down server...");
+            ServerUnloadMapGenSceneIfLoaded();
+            yield return new WaitForSeconds(0.25f);
             ServerManager.StopConnection(true);
         }
 
@@ -332,16 +435,24 @@ namespace RoachRace.Networking
         {
             if (IsServerStarted)
             {
-                // If we are the server (Host), stop the server completely
-                ServerManager.StopConnection(true);
-                Debug.Log("[NetworkGameManager] Host left game (stopped server)");
+                // If we are the server (Host), unload gameplay scene then stop the server.
+                ServerUnloadMapGenSceneIfLoaded();
+                StartCoroutine(LeaveGameStopServerCoroutine());
+                Debug.Log("[NetworkGameManager] Host left game (unloaded MapGen then stopping server)");
             }
             else if (IsClientStarted)
             {
-                // If we are just a client, disconnect
+                // If we are just a client, unload MapGen locally then disconnect.
+                ClientUnloadMapGenSceneIfLoaded();
                 ClientManager.StopConnection();
                 Debug.Log("[NetworkGameManager] Client left game (stopped connection)");
             }
+        }
+
+        private System.Collections.IEnumerator LeaveGameStopServerCoroutine()
+        {
+            yield return new WaitForSeconds(0.25f);
+            ServerManager.StopConnection(true);
         }
 
         #endregion
