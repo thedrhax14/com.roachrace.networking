@@ -30,6 +30,12 @@ namespace RoachRace.Networking
         public readonly SyncVar<string> imageUrl = new("");
         public Player _playerData;
 
+        void Update()
+        {
+            if(!IsOwner) return;
+            transform.position = Camera.main.transform.position;
+        }
+
         #region NetworkBehaviour Lifecycle
 
         public override void OnStartServer()
