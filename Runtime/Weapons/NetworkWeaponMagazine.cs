@@ -47,6 +47,7 @@ namespace RoachRace.Networking.Weapons
 
         // Owner-only client prediction for presentation.
         private int _predictedAmmoInMag;
+        private int _pendingPredictedShots;
         private bool _predictionInitialized;
         private bool _hudActive;
 
@@ -66,7 +67,11 @@ namespace RoachRace.Networking.Weapons
         public bool IsReloading => _isReloading.Value;
 
         /// <summary>
-        /// Owner-only presentation value. Never exceeds server ammo.
+        /// Owner-only presentation value.<br/>
+        /// <br/>
+        /// Typical behavior:<br/>
+        /// - Derived from the latest authoritative server ammo count minus locally predicted shots that have not yet been confirmed.<br/>
+        /// - Prevents the HUD from bouncing upward while the server catches up to owner-side presentation.<br/>
         /// </summary>
         public int PredictedAmmoInMag => _predictionInitialized ? _predictedAmmoInMag : _ammoInMag.Value;
 
@@ -109,13 +114,16 @@ namespace RoachRace.Networking.Weapons
             if (_isReloading.Value)
                 return false;
 
-            // Never allow prediction to exceed the latest server value.
-            _predictedAmmoInMag = Mathf.Min(_predictedAmmoInMag, _ammoInMag.Value);
+            // Rebuild from authoritative ammo so pending predicted shots remain stable while server updates catch up.
+            int serverAmmo = _ammoInMag.Value;
+            _pendingPredictedShots = Mathf.Clamp(_pendingPredictedShots, 0, serverAmmo);
+            _predictedAmmoInMag = Mathf.Max(0, serverAmmo - _pendingPredictedShots);
 
             if (_predictedAmmoInMag <= 0)
                 return false;
 
-            _predictedAmmoInMag = Mathf.Max(0, _predictedAmmoInMag - 1);
+            _pendingPredictedShots = Mathf.Min(serverAmmo, _pendingPredictedShots + 1);
+            _predictedAmmoInMag = Mathf.Max(0, serverAmmo - _pendingPredictedShots);
 
             if (_hudActive && weaponHudModel != null)
                 weaponHudModel.SetAmmoInMag(_predictedAmmoInMag);
@@ -247,8 +255,12 @@ namespace RoachRace.Networking.Weapons
 
             InitializePredictionIfNeeded();
 
-            // Never let predicted exceed server.
-            _predictedAmmoInMag = Mathf.Min(_predictedAmmoInMag, next);
+            if (next < prev)
+                _pendingPredictedShots = Mathf.Max(0, _pendingPredictedShots - (prev - next));
+            else if (next > prev)
+                _pendingPredictedShots = 0;
+
+            _predictedAmmoInMag = Mathf.Max(0, next - _pendingPredictedShots);
 
             if (_hudActive)
                 weaponHudModel.SetAmmoInMag(_predictedAmmoInMag);
@@ -263,7 +275,10 @@ namespace RoachRace.Networking.Weapons
 
             // Reload finished: snap predicted up to server (allowed jump-up).
             if (prev && !next)
+            {
+                _pendingPredictedShots = 0;
                 _predictedAmmoInMag = _ammoInMag.Value;
+            }
 
             if (_hudActive)
             {
@@ -277,8 +292,30 @@ namespace RoachRace.Networking.Weapons
             if (_predictionInitialized)
                 return;
 
+            _pendingPredictedShots = 0;
             _predictedAmmoInMag = _ammoInMag.Value;
             _predictionInitialized = true;
+        }
+
+        /// <summary>
+        /// Owner-only recovery hook for rejected predicted use.<br/>
+        /// <br/>
+        /// Typical behavior:<br/>
+        /// - Clears any locally pending predicted shots that were never confirmed by the server.<br/>
+        /// - Snaps the HUD back to the latest authoritative ammo count.<br/>
+        /// </summary>
+        public void ResetPredictedAmmoToServer()
+        {
+            if (!IsOwner || !IsClientInitialized)
+                return;
+
+            InitializePredictionIfNeeded();
+
+            _pendingPredictedShots = 0;
+            _predictedAmmoInMag = _ammoInMag.Value;
+
+            if (_hudActive && weaponHudModel != null)
+                weaponHudModel.SetAmmoInMag(_predictedAmmoInMag);
         }
 
         private void PushHudState()

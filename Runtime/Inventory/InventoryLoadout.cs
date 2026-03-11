@@ -18,7 +18,7 @@ namespace RoachRace.Networking.Inventory
             public ushort itemId;
 
             [Tooltip("How many to grant. For non-stackable items this will effectively grant 1 per empty slot.")]
-            public byte amount;
+            public int amount;
         }
 
         [Tooltip("Items granted by the server when this player spawns. Useful for default loadouts.")]

@@ -69,6 +69,8 @@ namespace RoachRace.Networking.Inventory
 
         private bool _uiModelDirty;
         private bool _characterAnimationInitialized = false;
+        private bool _ownerFeedbackSubscribed;
+        private bool _ownerSlotsSubscribed;
 
         /// <summary>
         /// Server-only helper to report an item use failure to the owning client.<br/>
@@ -274,7 +276,7 @@ namespace RoachRace.Networking.Inventory
                 ushort id = entry.itemDefinition != null ? entry.itemDefinition.id : entry.itemId;
                 if (id == 0) continue;
 
-                byte amt = entry.amount;
+                int amt = entry.amount;
                 if (amt == 0) amt = 1;
 
                 TryAddItem(id, amt);
@@ -308,6 +310,7 @@ namespace RoachRace.Networking.Inventory
             _selectedSlotIndex.OnChange += OnSelectedSlotChanged;
 
             _inventoryReady.OnChange += OnInventoryReadyChanged;
+            RefreshOwnerClientSubscriptions();
             TryInitializeCharacterAnimationIfReady();
         }
 
@@ -323,12 +326,7 @@ namespace RoachRace.Networking.Inventory
         public override void OnOwnershipClient(NetworkConnection prevOwner)
         {
             base.OnOwnershipClient(prevOwner);
-            // Only the local owner should drive the local UI model.
-            if (IsOwner)
-            {
-                Slots.OnChange += OnSlotsChanged;
-                _uiModelDirty = true;
-            }
+            RefreshOwnerClientSubscriptions();
         }
 
         /// <summary>
@@ -365,8 +363,78 @@ namespace RoachRace.Networking.Inventory
             _selectedSlotIndex.OnChange -= OnSelectedSlotChanged;
 
             _inventoryReady.OnChange -= OnInventoryReadyChanged;
+            RemoveOwnerClientSubscriptions();
+        }
 
-            Slots.OnChange -= OnSlotsChanged;
+        /// <summary>
+        /// Refreshes owner-only client subscriptions used for HUD updates and predicted-use cancellation.<br/>
+        ///<br/>
+        /// Typical behavior:<br/>
+        /// - Subscribes when this client is the local owner.<br/>
+        /// - Unsubscribes when ownership is lost.<br/>
+        /// </summary>
+        private void RefreshOwnerClientSubscriptions()
+        {
+            RemoveOwnerClientSubscriptions();
+
+            if (!IsOwner)
+                return;
+
+            Slots.OnChange += OnSlotsChanged;
+            _ownerSlotsSubscribed = true;
+
+            if (itemUseFeedback != null)
+            {
+                itemUseFeedback.OnItemUseFailed += OnLocalItemUseFailed;
+                _ownerFeedbackSubscribed = true;
+            }
+
+            _uiModelDirty = true;
+        }
+
+        /// <summary>
+        /// Removes owner-only client subscriptions to avoid duplicate callbacks and leaks.<br/>
+        /// </summary>
+        private void RemoveOwnerClientSubscriptions()
+        {
+            if (_ownerSlotsSubscribed)
+            {
+                Slots.OnChange -= OnSlotsChanged;
+                _ownerSlotsSubscribed = false;
+            }
+
+            if (_ownerFeedbackSubscribed && itemUseFeedback != null)
+            {
+                itemUseFeedback.OnItemUseFailed -= OnLocalItemUseFailed;
+                _ownerFeedbackSubscribed = false;
+            }
+        }
+
+        /// <summary>
+        /// Owner-client failure callback used to cancel predicted item use when the server rejects the request.<br/>
+        ///<br/>
+        /// Typical behavior:<br/>
+        /// - Matches the currently selected item against the reported failure.<br/>
+        /// - Stops local predicted use without sending another RPC.<br/>
+        /// </summary>
+        /// <param name="failure">Failure information reported by the server.</param>
+        private void OnLocalItemUseFailed(ItemUseFailure failure)
+        {
+            if (!IsOwner)
+                return;
+
+            if (!TryGetSelectedItem(out var slotState, out var item) || item == null)
+                return;
+
+            bool matchesSelectedSlot = failure.SlotIndex >= 0 && failure.SlotIndex == _selectedSlotIndex.Value;
+            bool matchesSelectedItem = failure.ItemId != 0 && failure.ItemId == slotState.ItemId;
+            if (!matchesSelectedSlot && !matchesSelectedItem)
+                return;
+
+            if (item is MonoBehaviour itemBehaviour && itemBehaviour.TryGetComponent<Weapons.NetworkWeaponMagazine>(out var magazine))
+                magazine.ResetPredictedAmmoToServer();
+
+            EndPredictedUseLocally(item);
         }
 
         private void OnInventoryReadyChanged(bool prev, bool next, bool asServer)
@@ -622,6 +690,15 @@ namespace RoachRace.Networking.Inventory
             if (!TryGetSelectedItem(out var item) || item == null)
                 return;
 
+            EndPredictedUseLocally(item);
+        }
+
+        /// <summary>
+        /// Stops owner-only predicted use for a specific item without contacting the server.<br/>
+        /// </summary>
+        /// <param name="item">The item whose predicted use should end.</param>
+        private static void EndPredictedUseLocally(IRoachRaceItem item)
+        {
             if (item is ILocalPredictedUseItem predictedItem)
                 predictedItem.EndPredictedUse();
         }
@@ -924,7 +1001,7 @@ namespace RoachRace.Networking.Inventory
         /// <c>false</c> invalid inputs (id 0 or amount 0).<br/>
         /// </returns>
         [Server]
-        public bool TryAddItem(ushort itemId, byte amount)
+        public bool TryAddItem(ushort itemId, int amount)
         {
             if (itemId == 0) return false;
             if (amount == 0) return false;
@@ -942,9 +1019,9 @@ namespace RoachRace.Networking.Inventory
                     if (canAdd <= 0) continue;
 
                     int toAdd = Mathf.Min(canAdd, amount);
-                    s.Count = (byte)(s.Count + toAdd);
+                    s.Count += toAdd;
                     Slots[i] = s;
-                    amount -= (byte)toAdd;
+                    amount -= toAdd;
                     if (amount == 0) return true;
                 }
             }
@@ -955,11 +1032,11 @@ namespace RoachRace.Networking.Inventory
                 var s = Slots[i];
                 if (!s.IsEmpty) continue;
 
-                byte put;
+                int put;
                 if (TryGetDefinition(itemId, out var def2) && def2.stackable)
                 {
                     int maxStack = Mathf.Max(1, def2.maxStack);
-                    put = (byte)Mathf.Min(maxStack, amount);
+                    put = Mathf.Min(maxStack, amount);
                 }
                 else
                 {
@@ -1003,7 +1080,7 @@ namespace RoachRace.Networking.Inventory
                     if (canAdd <= 0) continue;
 
                     int toAdd = Mathf.Min(canAdd, remaining);
-                    s.Count = (byte)(s.Count + toAdd);
+                    s.Count += toAdd;
                     Slots[i] = s;
                     remaining -= toAdd;
                     added += toAdd;
@@ -1027,7 +1104,7 @@ namespace RoachRace.Networking.Inventory
                     put = 1;
                 }
 
-                Slots[i] = new InventorySlotState { ItemId = itemId, Count = (byte)put };
+                Slots[i] = new InventorySlotState { ItemId = itemId, Count = put };
                 remaining -= put;
                 added += put;
             }
@@ -1040,7 +1117,7 @@ namespace RoachRace.Networking.Inventory
         /// Intended for "drop selected" behavior.
         /// </summary>
         [Server]
-        public bool TryRemoveSelectedStack(out ushort itemId, out byte count)
+        public bool TryRemoveSelectedStack(out ushort itemId, out int count)
         {
             itemId = 0;
             count = 0;
@@ -1136,7 +1213,7 @@ namespace RoachRace.Networking.Inventory
                 }
                 else
                 {
-                    s.Count = (byte)newCount;
+                    s.Count = newCount;
                     Slots[i] = s;
                 }
 

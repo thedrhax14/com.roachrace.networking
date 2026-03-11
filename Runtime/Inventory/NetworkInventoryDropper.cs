@@ -86,7 +86,7 @@ namespace RoachRace.Networking
                 }
             }
 
-            if (!inventory.TryRemoveSelectedStack(out ushort itemId, out byte count))
+            if (!inventory.TryRemoveSelectedStack(out ushort itemId, out int count))
                 return;
 
             prefabToSpawn ??= pickupPrefab;

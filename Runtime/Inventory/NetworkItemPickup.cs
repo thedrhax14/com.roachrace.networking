@@ -31,12 +31,12 @@ namespace RoachRace.Networking
         [Tooltip("ItemDefinition id to grant. 0 is reserved for empty. This is the value actually used at runtime/network.")]
         [SerializeField] private ushort itemId = 1;
         [Tooltip("Initial amount available in this pickup. For non-stackable items this will effectively grant 1 per empty slot.")]
-        [SerializeField] private byte amount = 1;
+        [SerializeField, Min(1)] private int amount = 1;
 
-        private readonly SyncVar<byte> _remainingAmount = new(0);
+        private readonly SyncVar<int> _remainingAmount = new(0);
 
         public ushort ItemId => itemId;
-        public byte RemainingAmount => _remainingAmount.Value;
+        public int RemainingAmount => _remainingAmount.Value;
 
         private void Awake()
         {
@@ -73,7 +73,7 @@ namespace RoachRace.Networking
         /// Intended for drops (inventory -> world) and runtime spawns.
         /// </summary>
         [Server]
-        public void ServerSetPayload(ushort newItemId, byte newAmount)
+        public void ServerSetPayload(ushort newItemId, int newAmount)
         {
             if (newItemId == 0) return;
             if (newAmount == 0) return;
@@ -102,7 +102,7 @@ namespace RoachRace.Networking
             if (added <= 0) return false;
 
             int remaining = requested - added;
-            _remainingAmount.Value = (byte)Mathf.Clamp(remaining, 0, byte.MaxValue);
+            _remainingAmount.Value = Mathf.Max(remaining, 0);
 
             if (_remainingAmount.Value == 0 && NetworkObject != null)
                 ServerManager.Despawn(NetworkObject);
