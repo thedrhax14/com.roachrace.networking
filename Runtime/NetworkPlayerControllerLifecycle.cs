@@ -86,6 +86,34 @@ namespace RoachRace.Networking
         }
 
         /// <summary>
+        /// Spawns (or re-spawns) the player's controller for their current team at an explicit pose.<br>
+        /// Typical usage: used by match start sequences to replace an animated "spawn pod" with the real controllable controller at the same position/rotation.<br>
+        /// Configuration/context: controller prefab selection mirrors <see cref="ServerSpawnControllerForCurrentTeam"/>.<br>
+        /// Server/client constraints: must be called on the server; the spawned NetworkObject is owned by <see cref="NetworkBehaviour.Owner"/>.
+        /// </summary>
+        /// <param name="position">World position to spawn at.</param>
+        /// <param name="rotation">World rotation to spawn with.</param>
+        [Server]
+        public void ServerSpawnControllerForCurrentTeamAt(Vector3 position, Quaternion rotation)
+        {
+            if (_respawnInProgress)
+                return;
+
+            var team = _networkPlayer.Team;
+            var prefab = GetControllerPrefabForTeam(team);
+
+            if (prefab == null)
+            {
+                Debug.LogError($"No controller prefab for team {team}", gameObject);
+                return;
+            }
+
+            var controller = Instantiate(prefab, position, rotation);
+            InstanceFinder.ServerManager.Spawn(controller, Owner, gameObject.scene);
+            SetCurrentController(controller);
+        }
+
+        /// <summary>
         /// Requests a respawn of the player's controller, optionally delayed by <c>respawnDelaySeconds</c>.<br>
         /// Typical usage: invoked after death (via <see cref="INetworkHealthServerDeathObserver"/>) or via a client-owned stats RPC (see <see cref="NetworkPlayerStats.RequestRespawnServerRpc"/>).<br>
         /// Server/client constraints: must be executed on the server; this method is a no-op while a respawn is already in progress.

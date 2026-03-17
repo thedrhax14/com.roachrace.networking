@@ -22,6 +22,15 @@ namespace RoachRace.Networking
         [Header("Dependencies")]
         [SerializeField] private GameStateModel gameStateModel;
 
+        [Tooltip("Optional: host-selected match settings used to decide whether to run the intro sequence.")]
+        [SerializeField] private GameSettingsModel gameSettingsModel;
+
+        [Tooltip("Optional: Spawn sequence model used by intro Timeline/pod sequence.")]
+        [SerializeField] private SpawnSequenceModel spawnSequenceModel;
+
+        [Tooltip("Optional: server-side pod spawner used when intro is enabled.")]
+        [SerializeField] private NetworkMatchStartPodSpawner matchStartPodSpawner;
+
         [Header("Scenes")]
         [Tooltip("Additive gameplay scene to load/unload using FishNet SceneManager (eg contains RoachRaceNetMapGen).")]
         [SerializeField] private string mapGenSceneName = "MapGen";
@@ -37,6 +46,12 @@ namespace RoachRace.Networking
         private readonly SyncVar<GameState> currentState = new(GameState.Lobby);
         private readonly SyncList<PlayerStats> allPlayerStats = new();
         private readonly SyncVar<long> gameStartTimestampMs = new(0);
+
+        private readonly SyncVar<bool> introEnabled = new(true);
+        private readonly SyncVar<float> introDurationSeconds = new(10f);
+
+        private readonly SyncVar<int> spawnSequencePhase = new((int)SpawnSequenceModel.SpawnSequencePhase.None);
+        private readonly SyncVar<long> introStartTimestampMsUtc = new(0);
         
         private float gameStartTime;
         private Dictionary<int, NetworkPlayerStats> playerStatsMap = new();
@@ -60,6 +75,27 @@ namespace RoachRace.Networking
             gameStateModel.SetMaxRespawns(maxRespawns);
             
             Debug.Log($"[{nameof(NetworkGameManager)}] Server initialized");
+
+            if (gameSettingsModel == null)
+            {
+                Debug.LogWarning(
+                    $"[{nameof(NetworkGameManager)}] Optional reference missing on '{gameObject.name}': gameSettingsModel (intro will default to disabled)",
+                    gameObject);
+            }
+
+            if (spawnSequenceModel == null)
+            {
+                Debug.LogWarning(
+                    $"[{nameof(NetworkGameManager)}] Optional reference missing on '{gameObject.name}': spawnSequenceModel (clients may not see intro state)",
+                    gameObject);
+            }
+
+            if (matchStartPodSpawner == null)
+            {
+                Debug.LogWarning(
+                    $"[{nameof(NetworkGameManager)}] Optional reference missing on '{gameObject.name}': matchStartPodSpawner (intro will fall back to immediate controller spawn)",
+                    gameObject);
+            }
         }
 
         public override void OnStartClient()
@@ -76,16 +112,31 @@ namespace RoachRace.Networking
             currentState.OnChange -= OnGameStateChanged;
             allPlayerStats.OnChange -= OnPlayerStatsChanged;
             gameStartTimestampMs.OnChange -= OnGameStartTimestampChanged;
+            introEnabled.OnChange -= OnIntroEnabledChanged;
+            introDurationSeconds.OnChange -= OnIntroDurationSecondsChanged;
+            spawnSequencePhase.OnChange -= OnSpawnSequencePhaseChanged;
+            introStartTimestampMsUtc.OnChange -= OnIntroStartTimestampChanged;
 
             // Subscribe to state changes
             currentState.OnChange += OnGameStateChanged;
             allPlayerStats.OnChange += OnPlayerStatsChanged;
             gameStartTimestampMs.OnChange += OnGameStartTimestampChanged;
+            introEnabled.OnChange += OnIntroEnabledChanged;
+            introDurationSeconds.OnChange += OnIntroDurationSecondsChanged;
+            spawnSequencePhase.OnChange += OnSpawnSequencePhaseChanged;
+            introStartTimestampMsUtc.OnChange += OnIntroStartTimestampChanged;
             
             // Update model with current state
             gameStateModel.SetGameState(currentState.Value);
             gameStateModel.SetMaxRespawns(maxRespawns);
             UpdateCountdownFromTimestamp(gameStartTimestampMs.Value);
+
+            if (spawnSequenceModel != null)
+            {
+                spawnSequenceModel.ApplyIntroConfig(introEnabled.Value, introDurationSeconds.Value);
+                spawnSequenceModel.SetIntroStartTimestampMsUtc(introStartTimestampMsUtc.Value);
+                spawnSequenceModel.SetPhase((SpawnSequenceModel.SpawnSequencePhase)spawnSequencePhase.Value);
+            }
             
             // Register with GameOverWindow
             RegisterWithGameOverWindow();
@@ -103,6 +154,10 @@ namespace RoachRace.Networking
             currentState.OnChange -= OnGameStateChanged;
             allPlayerStats.OnChange -= OnPlayerStatsChanged;
             gameStartTimestampMs.OnChange -= OnGameStartTimestampChanged;
+            introEnabled.OnChange -= OnIntroEnabledChanged;
+            introDurationSeconds.OnChange -= OnIntroDurationSecondsChanged;
+            spawnSequencePhase.OnChange -= OnSpawnSequencePhaseChanged;
+            introStartTimestampMsUtc.OnChange -= OnIntroStartTimestampChanged;
 
             ClientManager.OnClientConnectionState -= OnClientConnectionState;
             
@@ -151,6 +206,8 @@ namespace RoachRace.Networking
                 return;
             }
 
+            ServerApplyMatchIntroSettingsFromModel();
+
             // Set state to Starting
             currentState.Value = GameState.Starting;
 
@@ -182,6 +239,8 @@ namespace RoachRace.Networking
             gameStartTime = Time.time;
             gameStartTimestampMs.Value = 0;
 
+            ServerApplyMatchIntroSettingsFromModel();
+
             allPlayerStats.Clear();
             foreach (var kvp in playerStatsMap)
             {
@@ -191,7 +250,7 @@ namespace RoachRace.Networking
 
             ServerLoadMapGenSceneIfNeeded();
 
-            ServerHandleGameStartSpawns();
+            ServerHandleGameStartSpawnsOrIntroSequence();
 
             Debug.Log($"[{nameof(NetworkGameManager)}] <color=cyan>DEV</color>: Immediate start with {allPlayerStats.Count} players");
         }
@@ -233,7 +292,7 @@ namespace RoachRace.Networking
 
             ServerLoadMapGenSceneIfNeeded();
 
-            ServerHandleGameStartSpawns();
+            ServerHandleGameStartSpawnsOrIntroSequence();
             
             // Server-specific initialization (map generation, etc.)
             Debug.Log($"[{nameof(NetworkGameManager)}] SERVER: Game started with {allPlayerStats.Count} players - Starting map generation...");
@@ -257,6 +316,185 @@ namespace RoachRace.Networking
             var lifecycles = FindObjectsByType<NetworkPlayerControllerLifecycle>(FindObjectsSortMode.None);
             foreach (var lifecycle in lifecycles)
                 lifecycle.ServerSpawnControllerForCurrentTeam();
+        }
+
+        [Server]
+        private void ServerHandleGameStartSpawnsOrIntroSequence()
+        {
+            // If intro is disabled, immediately spawn controllers.
+            if (!introEnabled.Value)
+            {
+                ServerHandleGameStartSpawns();
+
+                if (spawnSequenceModel != null)
+                {
+                    spawnSequenceModel.ApplyIntroConfig(false, 0f);
+                    spawnSequenceModel.SetIntroStartTimestampMsUtc(0);
+                    spawnSequenceModel.SetPhase(SpawnSequenceModel.SpawnSequencePhase.ControllersSpawned);
+                }
+
+                spawnSequencePhase.Value = (int)SpawnSequenceModel.SpawnSequencePhase.ControllersSpawned;
+                introStartTimestampMsUtc.Value = 0;
+
+                Debug.Log($"[{nameof(NetworkGameManager)}] Intro disabled; spawning controllers immediately on '{gameObject.name}'", gameObject);
+                return;
+            }
+
+            // Prepare spawn system (ownership/spawn indices) but do not spawn controllers yet.
+            var roomManager = FindFirstObjectByType<NetworkRoomManager>();
+            if (roomManager != null)
+                roomManager.NetworkObject.RemoveOwnership();
+
+            var spawner = FindFirstObjectByType<RoachRacePlayerSpawner>();
+            if (spawner != null)
+                spawner.ResetSpawnIndices();
+
+            if (spawnSequenceModel != null)
+            {
+                spawnSequenceModel.ApplyIntroConfig(true, introDurationSeconds.Value);
+                spawnSequenceModel.SetIntroStartTimestampMsUtc(0);
+                spawnSequenceModel.SetPhase(SpawnSequenceModel.SpawnSequencePhase.WaitingForFirstChunk);
+            }
+
+            spawnSequencePhase.Value = (int)SpawnSequenceModel.SpawnSequencePhase.WaitingForFirstChunk;
+            introStartTimestampMsUtc.Value = 0;
+
+            if (matchStartPodSpawner == null)
+                matchStartPodSpawner = FindFirstObjectByType<NetworkMatchStartPodSpawner>();
+
+            if (matchStartPodSpawner == null)
+            {
+                Debug.LogError($"[{nameof(NetworkGameManager)}] Intro enabled but no {nameof(NetworkMatchStartPodSpawner)} found on '{gameObject.name}'. Falling back to immediate controller spawn.", gameObject);
+                ServerHandleGameStartSpawns();
+                return;
+            }
+
+            StartCoroutine(ServerWaitForFirstChunkThenSpawnPodsCoroutine());
+        }
+
+        /// <summary>
+        /// Server-only setter for the network-synced spawn sequence phase.<br></br>
+        /// Purpose: keep <see cref="SpawnSequenceModel"/> in sync on all clients without relying on local-only events.
+        /// </summary>
+        /// <param name="phase">New phase.</param>
+        [Server]
+        public void ServerSetSpawnSequencePhase(SpawnSequenceModel.SpawnSequencePhase phase)
+        {
+            spawnSequencePhase.Value = (int)phase;
+            if (spawnSequenceModel != null)
+                spawnSequenceModel.SetPhase(phase);
+
+            Debug.Log($"[{nameof(NetworkGameManager)}] Spawn sequence phase -> {phase} on '{gameObject.name}'", gameObject);
+        }
+
+        [Server]
+        private void ServerApplyMatchIntroSettingsFromModel()
+        {
+            bool enabled = true;
+            float durationSeconds = 10f;
+
+            if (gameSettingsModel != null)
+            {
+                enabled = gameSettingsModel.IntroEnabled.Value;
+                durationSeconds = gameSettingsModel.IntroDurationSeconds.Value;
+            }
+            else
+            {
+                // Preserve existing behavior when settings are not wired yet.
+                enabled = false;
+                durationSeconds = 0f;
+                Debug.LogWarning($"[{nameof(NetworkGameManager)}] Missing {nameof(GameSettingsModel)} on '{gameObject.name}'. Defaulting to intro disabled.", gameObject);
+            }
+
+            introEnabled.Value = enabled;
+            introDurationSeconds.Value = Mathf.Max(0f, durationSeconds);
+
+            Debug.Log(
+                $"[{nameof(NetworkGameManager)}] Match intro settings on '{gameObject.name}': enabled={introEnabled.Value}, durationSeconds={introDurationSeconds.Value:0.###}",
+                gameObject);
+
+            if (spawnSequenceModel != null)
+                spawnSequenceModel.ApplyIntroConfig(introEnabled.Value, introDurationSeconds.Value);
+        }
+
+        [Server]
+        private System.Collections.IEnumerator ServerWaitForFirstChunkThenSpawnPodsCoroutine()
+        {
+            // Wait until the MapGen "first chunk" hook transitions the model into Cinematic.
+            const float timeoutSeconds = 30f;
+            float startTime = Time.time;
+
+            if (spawnSequenceModel == null)
+            {
+                Debug.LogError($"[{nameof(NetworkGameManager)}] Intro enabled but missing {nameof(SpawnSequenceModel)} on '{gameObject.name}'. Spawning pods immediately.", gameObject);
+                matchStartPodSpawner.ServerSpawnPodsAfterDelay(introDurationSeconds.Value);
+                yield break;
+            }
+
+            while (spawnSequenceModel.Phase.Value != SpawnSequenceModel.SpawnSequencePhase.Cinematic)
+            {
+                if (Time.time - startTime > timeoutSeconds)
+                {
+                    Debug.LogError($"[{nameof(NetworkGameManager)}] Timed out waiting for first chunk/cinematic on '{gameObject.name}'. Spawning pods anyway.", gameObject);
+                    break;
+                }
+
+                yield return null;
+            }
+
+            Debug.Log(
+                $"[{nameof(NetworkGameManager)}] Cinematic observed; scheduling pods after {introDurationSeconds.Value:0.###}s on '{gameObject.name}'",
+                gameObject);
+
+            // Synchronize cinematic start across clients (late joiners, ordering).
+            if (spawnSequenceModel.Phase.Value == SpawnSequenceModel.SpawnSequencePhase.Cinematic)
+            {
+                spawnSequencePhase.Value = (int)SpawnSequenceModel.SpawnSequencePhase.Cinematic;
+                long ts = spawnSequenceModel.IntroStartTimestampMsUtc.Value;
+                if (ts <= 0)
+                    ts = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                introStartTimestampMsUtc.Value = ts;
+            }
+            else
+            {
+                // Timeout fallback: still advance the synced phase so presentation can proceed.
+                spawnSequencePhase.Value = (int)SpawnSequenceModel.SpawnSequencePhase.Cinematic;
+                introStartTimestampMsUtc.Value = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            }
+
+            matchStartPodSpawner.ServerSpawnPodsAfterDelay(introDurationSeconds.Value);
+        }
+
+        private void OnIntroEnabledChanged(bool prev, bool next, bool asServer)
+        {
+            if (spawnSequenceModel == null)
+                return;
+
+            spawnSequenceModel.ApplyIntroConfig(next, introDurationSeconds.Value);
+        }
+
+        private void OnIntroDurationSecondsChanged(float prev, float next, bool asServer)
+        {
+            if (spawnSequenceModel == null)
+                return;
+
+            spawnSequenceModel.ApplyIntroConfig(introEnabled.Value, next);
+        }
+
+        private void OnSpawnSequencePhaseChanged(int prev, int next, bool asServer)
+        {
+            if (spawnSequenceModel == null)
+                return;
+
+            spawnSequenceModel.SetPhase((SpawnSequenceModel.SpawnSequencePhase)next);
+        }
+
+        private void OnIntroStartTimestampChanged(long prev, long next, bool asServer)
+        {
+            if (spawnSequenceModel == null)
+                return;
+
+            spawnSequenceModel.SetIntroStartTimestampMsUtc(next);
         }
 
         /// <summary>
