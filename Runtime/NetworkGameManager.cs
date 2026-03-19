@@ -410,7 +410,7 @@ namespace RoachRace.Networking
             introDurationSeconds.Value = Mathf.Max(0f, durationSeconds);
 
             Debug.Log(
-                $"[{nameof(NetworkGameManager)}] Match intro settings on '{gameObject.name}': enabled={introEnabled.Value}, durationSeconds={introDurationSeconds.Value:0.###}",
+                $"[{nameof(NetworkGameManager)}] Match intro settings on '{gameObject.name}': enabled={introEnabled.Value}, durationSeconds={introDurationSeconds.Value:0.###}, settingsModel='{(gameSettingsModel != null ? gameSettingsModel.name : "null")}'",
                 gameObject);
 
             if (spawnSequenceModel != null)
