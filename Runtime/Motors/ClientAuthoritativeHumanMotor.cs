@@ -74,6 +74,11 @@ namespace RoachRace.Networking
                 rb.constraints |= RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
         }
 
+        /// <summary>
+        /// FishNet client lifecycle hook.<br/>
+        /// Typical usage: configures owner-only input/camera and ensures the motor's yaw state is initialized from the spawned pose so respawns do not snap to global forward on the first simulation tick.<br/>
+        /// Server/client constraints: runs on all clients; only the owner enables input and simulates physics.
+        /// </summary>
         public override void OnStartClient()
         {
             base.OnStartClient();
@@ -83,6 +88,26 @@ namespace RoachRace.Networking
                 rb.isKinematic = true;
             else if (IsOwner && rb != null)
                 rb.isKinematic = false;
+
+            if (IsOwner)
+            {
+                float initialYawDegrees = rb != null ? rb.rotation.eulerAngles.y : transform.rotation.eulerAngles.y;
+                _bodyYaw = initialYawDegrees;
+
+                _lookRotation.x = initialYawDegrees;
+                _aimRotation = Quaternion.Euler(0f, _lookRotation.x, 0f);
+                _syncedAimRotation = Quaternion.Euler(_lookRotation.y, _lookRotation.x, 0f);
+                _aimRotation.Normalize();
+
+                if (_characterCamera != null)
+                {
+                    _characterCamera.pitchInput = _lookRotation.y;
+                    _characterCamera.yawInput = _aimRotation.eulerAngles.y;
+                }
+
+                if (proceduralAnimationFPSData != null)
+                    proceduralAnimationFPSData.lookInput = _lookRotation;
+            }
 
             if (IsOwner) EnableInput();
             else _syncLookInput.OnChange += SyncLookInput_OnChange;
