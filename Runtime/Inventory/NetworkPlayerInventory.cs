@@ -7,6 +7,10 @@ using RoachRace.Interaction;
 using RoachRace.Networking.Input;
 using RoachRace.UI.Models;
 using UnityEngine;
+using System.Collections.Generic;
+using System.Linq;
+
+
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -71,6 +75,31 @@ namespace RoachRace.Networking.Inventory
         private bool _characterAnimationInitialized = false;
         private bool _ownerFeedbackSubscribed;
         private bool _ownerSlotsSubscribed;
+
+        private readonly HashSet<INetworkPlayerInventoryDeltaObserver> _serverDeltaObservers = new();
+
+        /// <summary>
+        /// Server-only: subscribes an observer to inventory item delta (transaction) notifications.<br/>
+        /// Intended for gameplay systems which need attribution (instigator) and deterministic server-side execution.
+        /// </summary>
+        /// <param name="observer">Observer to register; duplicates are ignored.</param>
+        [Server]
+        public void AddServerDeltaObserver(INetworkPlayerInventoryDeltaObserver observer)
+        {
+            if (observer == null) return;
+            _serverDeltaObservers.Add(observer);
+        }
+
+        /// <summary>
+        /// Server-only: unsubscribes an observer from inventory item delta (transaction) notifications.
+        /// </summary>
+        /// <param name="observer">Observer to unregister.</param>
+        [Server]
+        public void RemoveServerDeltaObserver(INetworkPlayerInventoryDeltaObserver observer)
+        {
+            if (observer == null) return;
+            _serverDeltaObservers.Remove(observer);
+        }
 
         /// <summary>
         /// Server-only helper to report an item use failure to the owning client.<br/>
@@ -957,7 +986,7 @@ namespace RoachRace.Networking.Inventory
             item.UseStart();
 
             // Consume one stack entry only when the definition says so.
-            if (TryGetDefinition(itemId, out var def) && def != null && def.consumesInventoryOnUse)
+            if (TryGetDefinition(itemId, out var def) && def != null && def.ConsumesInventoryOnUse)
             {
                 var slot = Slots[slotIndex];
                 bool slotBecameEmpty = false;
@@ -1007,14 +1036,14 @@ namespace RoachRace.Networking.Inventory
             if (amount == 0) return false;
 
             // If stackable, try to stack first.
-            if (TryGetDefinition(itemId, out var def) && def.stackable)
+            if (TryGetDefinition(itemId, out var def) && def != null && def.IsStackable)
             {
                 for (int i = 0; i < Slots.Count; i++)
                 {
                     var s = Slots[i];
                     if (s.ItemId != itemId) continue;
 
-                    int maxStack = Mathf.Max(1, def.maxStack);
+                    int maxStack = def.MaxStack;
                     int canAdd = maxStack - s.Count;
                     if (canAdd <= 0) continue;
 
@@ -1033,9 +1062,9 @@ namespace RoachRace.Networking.Inventory
                 if (!s.IsEmpty) continue;
 
                 int put;
-                if (TryGetDefinition(itemId, out var def2) && def2.stackable)
+                if (TryGetDefinition(itemId, out var def2) && def2 != null && def2.IsStackable)
                 {
-                    int maxStack = Mathf.Max(1, def2.maxStack);
+                    int maxStack = def2.MaxStack;
                     put = Mathf.Min(maxStack, amount);
                 }
                 else
@@ -1067,7 +1096,7 @@ namespace RoachRace.Networking.Inventory
             int added = 0;
 
             // If stackable, fill existing stacks first.
-            if (TryGetDefinition(itemId, out var def) && def != null && def.stackable)
+            if (TryGetDefinition(itemId, out var def) && def != null && def.IsStackable)
             {
                 for (int i = 0; i < Slots.Count && remaining > 0; i++)
                 {
@@ -1075,7 +1104,7 @@ namespace RoachRace.Networking.Inventory
                     if (s.IsEmpty) continue;
                     if (s.ItemId != itemId) continue;
 
-                    int maxStack = Mathf.Max(1, def.maxStack);
+                    int maxStack = def.MaxStack;
                     int canAdd = maxStack - s.Count;
                     if (canAdd <= 0) continue;
 
@@ -1094,9 +1123,9 @@ namespace RoachRace.Networking.Inventory
                 if (!s.IsEmpty) continue;
 
                 int put;
-                if (TryGetDefinition(itemId, out var def2) && def2 != null && def2.stackable)
+                if (TryGetDefinition(itemId, out var def2) && def2 != null && def2.IsStackable)
                 {
-                    int maxStack = Mathf.Max(1, def2.maxStack);
+                    int maxStack = def2.MaxStack;
                     put = Mathf.Min(maxStack, remaining);
                 }
                 else
@@ -1176,15 +1205,19 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
-    /// Server-only: consumes up to <paramref name="amount"/> units from any stacks matching <paramref name="itemId"/>, starting from the lowest slot index.<br/>
-    ///<br/>
-    /// Intended for ammo-style items where the weapon (not the inventory "use" action) decides how much to consume on reload.<br/>
+        /// Server-only: consumes up to <paramref name="amount"/> units from any stacks matching <paramref name="itemId"/>, starting from the lowest slot index.<br/>
+        ///<br/>
+        /// Typical usage:<br/>
+        /// - Ammo-style items where the weapon (not the inventory "use" action) decides how much to consume on reload.<br/>
+        /// - Status effects or gameplay systems consuming a discrete balance, while carrying instigator context for attribution.<br/>
         /// </summary>
-    /// <returns>
-    /// The amount actually consumed ($0..amount$).<br/>
-    /// </returns>
+        /// <param name="itemId">ItemDefinition id to consume.</param>
+        /// <param name="amount">Units requested to consume ($>0$).</param>
+        /// <param name="instigatorConnectionId">ClientId of the instigator connection (real user), or -1 for environment/unknown.</param>
+        /// <param name="instigatorObjectId">NetworkObjectId of the instigator object (combat attribution), or -1 for environment/unknown.</param>
+        /// <returns>The amount actually consumed ($0..amount$).</returns>
         [Server]
-        public int ConsumeByItemId(ushort itemId, int amount)
+        public int ConsumeByItemId(ushort itemId, int amount, int instigatorConnectionId = -1, int instigatorObjectId = -1)
         {
             if (itemId == 0) return 0;
             if (amount <= 0) return 0;
@@ -1227,7 +1260,52 @@ namespace RoachRace.Networking.Inventory
                 SetSelectionVisualsObserversRpc(selectedIdx);
             }
 
-            return amount - remaining;
+            int consumed = amount - remaining;
+            if (consumed != 0)
+                NotifyServerDeltaObservers(itemId, -consumed, instigatorConnectionId, instigatorObjectId);
+
+            return consumed;
+        }
+
+        /// <summary>
+        /// Server-only: applies a signed delta to stacks of <paramref name="itemId"/>.<br/>
+        /// Delta convention: negative = consume, positive = add.<br/>
+        /// Includes instigator context for observers: both connection (real user) and object (combat attribution).
+        /// </summary>
+        /// <param name="itemId">ItemDefinition id.</param>
+        /// <param name="delta">Signed delta to apply.</param>
+        /// <param name="instigatorConnectionId">ClientId of the instigator connection, or -1 for environment/unknown.</param>
+        /// <param name="instigatorObjectId">NetworkObjectId of the instigator object, or -1 for environment/unknown.</param>
+        /// <returns>The delta actually applied (may be 0 or reduced magnitude).</returns>
+        [Server]
+        public int ApplyDeltaByItemId(ushort itemId, int delta, int instigatorConnectionId = -1, int instigatorObjectId = -1)
+        {
+            if (itemId == 0) return 0;
+            if (delta == 0) return 0;
+
+            if (delta < 0)
+            {
+                int consumed = ConsumeByItemId(itemId, -delta, instigatorConnectionId, instigatorObjectId);
+                return -consumed;
+            }
+
+            int added = AddItemUpTo(itemId, delta);
+            if (added != 0)
+                NotifyServerDeltaObservers(itemId, added, instigatorConnectionId, instigatorObjectId);
+            return added;
+        }
+
+        [Server]
+        private void NotifyServerDeltaObservers(ushort itemId, int appliedDelta, int instigatorConnectionId, int instigatorObjectId)
+        {
+            if (_serverDeltaObservers.Count == 0) return;
+
+            // Iterate a snapshot to avoid issues if observers add/remove during callback.
+            foreach (var observer in _serverDeltaObservers.ToArray())
+            {
+                if (observer == null) continue;
+                observer.OnServerInventoryItemDeltaApplied(this, itemId, appliedDelta, instigatorConnectionId, instigatorObjectId);
+            }
         }
 
         /// <summary>
@@ -1346,7 +1424,7 @@ namespace RoachRace.Networking.Inventory
             item.UseStart();
 
             // Consume one stack entry only when the definition says so.
-            if (TryGetDefinition(slot.ItemId, out var def) && def != null && def.consumesInventoryOnUse)
+            if (TryGetDefinition(slot.ItemId, out var def) && def != null && def.ConsumesInventoryOnUse)
             {
                 TryRemoveOneFromSelected();
 

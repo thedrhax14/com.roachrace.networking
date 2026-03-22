@@ -33,8 +33,8 @@ Benefits:
 
 ### 3) Make item behavior asset-driven
 Expand or standardize `ItemDefinition` as the single source of truth:
-- `stackable`, `maxStack`
-- `consumesInventoryOnUse`
+- `InventoryItemRules` (stacking, max stack, consumes-on-use, droppable)
+- `WorldPickupRules` (pickup prefab when dropped)
 - `useOnSelect` / `equipOnSelect`
 - `requiresAim`
 - cooldown/charges

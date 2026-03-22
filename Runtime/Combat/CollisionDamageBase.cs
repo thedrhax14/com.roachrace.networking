@@ -96,7 +96,7 @@ namespace RoachRace.Networking.Combat
         }
 
         /// <summary>
-        /// Attempts to get the owner connection ID from the NetworkObject on the GameObject.
+        /// Attempts to get the owner ClientId from the NetworkObject on the GameObject.
         /// Returns -1 if no NetworkObject is found (environment/server-owned).
         /// </summary>
         protected static int GetInstigatorId(GameObject obj)

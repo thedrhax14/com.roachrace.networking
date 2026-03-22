@@ -1,4 +1,5 @@
 using FishNet;
+using FishNet.Connection;
 using FishNet.Object;
 using RoachRace.Data;
 using RoachRace.UI.Models;
@@ -70,19 +71,27 @@ namespace RoachRace.Networking.Combat
                 TeamId = -1
             };
 
-            // Best-effort: resolve team/name/avatar from instigator object if it has a NetworkPlayer.
+            // Best-effort: resolve team/name/avatar from the instigator ClientId (real user) by finding an owned
+            // NetworkObject with a NetworkPlayer component.
             if (InstanceFinder.NetworkManager != null && damageInfo.InstigatorId >= 0)
             {
                 if (InstanceFinder.NetworkManager.ServerManager != null &&
-                    InstanceFinder.NetworkManager.ServerManager.Objects.Spawned.TryGetValue(damageInfo.InstigatorId, out var instigatorNob) &&
-                    instigatorNob != null)
+                    InstanceFinder.NetworkManager.ServerManager.Clients != null &&
+                    InstanceFinder.NetworkManager.ServerManager.Clients.TryGetValue(damageInfo.InstigatorId, out NetworkConnection conn) &&
+                    conn != null &&
+                    conn.Objects != null)
                 {
-                    var player = instigatorNob.GetComponentInParent<RoachRace.Networking.NetworkPlayer>();
-                    if (player != null)
+                    foreach (var ownedObject in conn.Objects)
                     {
+                        if (ownedObject == null) continue;
+
+                        var player = ownedObject.GetComponentInParent<RoachRace.Networking.NetworkPlayer>();
+                        if (player == null) continue;
+
                         if (string.IsNullOrWhiteSpace(actor.Name)) actor.Name = player.PlayerName;
                         if (string.IsNullOrWhiteSpace(actor.AvatarUrl)) actor.AvatarUrl = player.ImageUrl;
                         actor.TeamId = (int)player.Team;
+                        break;
                     }
                 }
             }

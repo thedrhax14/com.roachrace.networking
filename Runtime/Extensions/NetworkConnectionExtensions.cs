@@ -8,9 +8,9 @@ namespace RoachRace.Networking.Extensions
     public static class NetworkExtensions
     {
         /// <summary>
-        /// Creates a DamageInfo struct with the connection's client ID as the instigator.
+        /// Creates a <see cref="DamageInfo"/> struct with <paramref name="instigatorId"/> as the instigator ClientId.
         /// </summary>
-        /// <param name="conn">The network connection that initiated the damage</param>
+        /// <param name="instigatorId">ClientId of the instigator connection (real user), or -1 for environment/unknown.</param>
         /// <param name="amount">Amount of damage to deal</param>
         /// <param name="type">Type of damage</param>
         /// <param name="point">World position where damage occurred</param>
@@ -43,7 +43,7 @@ namespace RoachRace.Networking.Extensions
     public static class NetworkConnectionExtensions
     {
         /// <summary>
-        /// Creates a DamageInfo struct with the connection's client ID as the instigator.
+        /// Creates a <see cref="DamageInfo"/> struct with the connection's ClientId as the instigator.
         /// </summary>
         /// <param name="conn">The network connection that initiated the damage</param>
         /// <param name="amount">Amount of damage to deal</param>
@@ -78,7 +78,7 @@ namespace RoachRace.Networking.Extensions
     public static class NetworkObjectExtensions
     {
         /// <summary>
-        /// Creates a DamageInfo struct with the NetworkObject owner's connection ID as the instigator.
+        /// Creates a <see cref="DamageInfo"/> struct with the NetworkObject owner's ClientId as the instigator.
         /// Useful for collision and physics-based damage systems.
         /// Returns -1 as instigator if object is server-owned (environment).
         /// </summary>

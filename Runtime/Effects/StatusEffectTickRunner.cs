@@ -2,10 +2,9 @@ using System;
 using System.Collections.Generic;
 using FishNet.Managing.Timing;
 using FishNet.Utility.Template;
-using RoachRace.Controls;
 using RoachRace.Data;
-using RoachRace.Networking.Combat;
-using RoachRace.Networking.Extensions;
+using RoachRace.Interaction;
+using RoachRace.Networking.Inventory;
 using UnityEngine;
 
 namespace RoachRace.Networking.Effects
@@ -44,7 +43,8 @@ namespace RoachRace.Networking.Effects
             public int HandleId;
             public StatusEffectDefinition Definition;
             public int Stacks;
-            public int InstigatorId;
+            public int InstigatorConnectionId;
+            public int InstigatorObjectId;
 
             public uint StartTick;
             public uint EndTick;
@@ -133,8 +133,9 @@ namespace RoachRace.Networking.Effects
         /// </summary>
         /// <param name="definition">The effect definition to add</param>
         /// <param name="stacks">Number of stacks to apply</param>
-        /// <param name="instigatorId">NetworkObjectId of the player/entity that caused this effect. Default -1 for environmental effects.</param>
-        public int AddEffect(StatusEffectDefinition definition, int stacks = 1, int instigatorId = -1)
+        /// <param name="instigatorConnectionId">ClientId of the instigator connection (real user), or -1 for environment/unknown.</param>
+        /// <param name="instigatorObjectId">NetworkObjectId of the instigator object (combat attribution), or -1 for environment/unknown.</param>
+        public int AddEffect(StatusEffectDefinition definition, int stacks = 1, int instigatorConnectionId = -1, int instigatorObjectId = -1)
         {
             if (definition == null) {
                 Debug.LogError($"[{nameof(StatusEffectTickRunner)}] Cannot add effect because definition is null.", gameObject);
@@ -209,7 +210,8 @@ namespace RoachRace.Networking.Effects
                 HandleId = _nextHandleId++,
                 Definition = definition,
                 Stacks = stacks,
-                InstigatorId = instigatorId,
+                InstigatorConnectionId = instigatorConnectionId,
+                InstigatorObjectId = instigatorObjectId,
                 StartTick = nowTick,
                 EndTick = GetEndTick(definition, nowTick),
                 IntervalTicks = intervalTicks,
@@ -303,87 +305,34 @@ namespace RoachRace.Networking.Effects
             if (def == null) return;
 
             float delta = def.DeltaPerTick * Mathf.Max(1, effect.Stacks);
-            ApplyDelta(def, delta, effect.InstigatorId);
+            ApplyDelta(def, delta, effect.InstigatorConnectionId, effect.InstigatorObjectId);
         }
 
-        private void ApplyDelta(StatusEffectDefinition def, float delta, int instigatorId = -1)
+        private void ApplyDelta(StatusEffectDefinition def, float delta, int instigatorConnectionId = -1, int instigatorObjectId = -1)
         {
             if (def == null) return;
             if (Mathf.Abs(delta) <= 0.0001f) return;
 
-            if (def.TargetResource == null)
-            {
-                if (!def.SilentIfTargetMissing)
-                    Debug.LogWarning($"[{nameof(StatusEffectTickRunner)}] Effect '{def.name}' has no Target Resource assigned.", gameObject);
+            if (def.TargetAsset == null)
+                throw new InvalidOperationException($"[{nameof(StatusEffectTickRunner)}] Missing required TargetAsset for StatusEffectDefinition '{def.name}' on '{gameObject.name}'.");
+
+            ItemDefinition asset = def.TargetAsset;
+            if (asset.id == 0)
+                throw new InvalidOperationException($"[{nameof(StatusEffectTickRunner)}] Invalid TargetAsset for StatusEffectDefinition '{def.name}' on '{gameObject.name}': asset '{asset.name}' has id 0 (reserved).");
+
+            var inventory = GetComponentInParent<NetworkPlayerInventory>();
+            if (inventory == null)
+                throw new InvalidOperationException($"[{nameof(StatusEffectTickRunner)}] Missing required {nameof(NetworkPlayerInventory)} on '{gameObject.name}' for effect '{def.name}'.");
+
+            if (!inventory.IsServerInitialized)
                 return;
-            }
 
-            bool hasResource = PlayerResourceUtils.TryGetResource(gameObject, def.TargetResource, out var resource);
-            if (!hasResource || resource == null)
-            {
-                if (!def.SilentIfTargetMissing)
-                    Debug.LogWarning($"[{nameof(StatusEffectTickRunner)}] Missing target resource '{def.TargetResource.DisplayName}' for effect '{def.name}'.", gameObject);
+            // Inventory is discrete; interpret delta as units per tick.
+            int units = Mathf.RoundToInt(delta);
+            if (units == 0)
                 return;
-            }
 
-            // Health special-case: NetworkHealth has int HP and proper death flow.
-            if (resource is NetworkHealth health)
-            {
-                ApplyToNetworkHealth(def, health, delta, instigatorId);
-                return;
-            }
-
-            // Generic PlayerResource pathway.
-            if (delta < 0f)
-            {
-                // Deplete.
-                resource.TryConsume(-delta);
-            }
-            else
-            {
-                // Recover.
-                resource.Add(delta);
-            }
-        }
-
-        private void ApplyToNetworkHealth(StatusEffectDefinition def, NetworkHealth health, float delta, int instigatorId = -1)
-        {
-            if (health == null) return;
-            if (!health.IsServerInitialized) return;
-            if (!health.IsAlive) return;
-
-            int amount = Mathf.RoundToInt(Mathf.Abs(delta));
-            if (amount <= 0) return;
-
-            if (delta > 0f)
-            {
-                health.Heal(amount);
-                return;
-            }
-
-            if (def.UseDamageInfoForHealth)
-            {
-                var info = NetworkExtensions.CreateDamageInfo(
-                    instigatorId: instigatorId,
-                    amount: amount,
-                    type: def.HealthDamageType,
-                    point: health.transform.position,
-                    normal: Vector3.up,
-                    source: new DamageSource
-                    {
-                        AttackerName = def.name,
-                        AttackerAvatarUrl = string.Empty,
-                        SourcePosition = health.transform.position,
-                        WeaponIconKey = string.Empty
-                    }
-                );
-
-                health.TryConsume(info);
-            }
-            else
-            {
-                health.TryConsume(amount);
-            }
+            inventory.ApplyDeltaByItemId(asset.id, units, instigatorConnectionId: instigatorConnectionId, instigatorObjectId: instigatorObjectId);
         }
 
         private void RefreshDuration(ActiveEffect effect, StatusEffectDefinition def, uint nowTick)

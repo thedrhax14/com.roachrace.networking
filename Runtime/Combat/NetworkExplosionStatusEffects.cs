@@ -140,11 +140,11 @@ namespace RoachRace.Networking.Combat
                         : 1f;
                 }
 
-                ApplyEffects(data.TickRunner, strength01);
+                ApplyEffects(data.TickRunner, strength01, instigatorOwnerId);
             }
         }
 
-        private void ApplyEffects(StatusEffectTickRunner tickRunner, float strength01)
+        private void ApplyEffects(StatusEffectTickRunner tickRunner, float strength01, int instigatorOwnerId)
         {
             if (tickRunner == null) return;
 
@@ -160,7 +160,7 @@ namespace RoachRace.Networking.Combat
                     if (removeExistingFirst)
                         tickRunner.RemoveEffects(entry.definition);
 
-                    tickRunner.AddEffect(entry.definition, entryStacks);
+                    tickRunner.AddEffect(entry.definition, entryStacks, instigatorConnectionId: instigatorOwnerId);
                 }
 
                 return;
@@ -178,7 +178,7 @@ namespace RoachRace.Networking.Combat
             if (removeExistingFirst)
                 tickRunner.RemoveEffects(_legacyEffect);
 
-            tickRunner.AddEffect(_legacyEffect, stacks);
+            tickRunner.AddEffect(_legacyEffect, stacks, instigatorConnectionId: instigatorOwnerId);
         }
 
         private int GetStacksToApply(ExplosionEffect entry, float strength01)

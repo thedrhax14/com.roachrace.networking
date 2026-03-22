@@ -17,7 +17,7 @@ namespace RoachRace.Networking
         [SerializeField] private NetworkPlayerInventory inventory;
 
         [Header("Drop Prefab")]
-        [Tooltip("Fallback prefab to spawn when dropping items if the ItemDefinition has no WorldPickupPrefab set. Must have NetworkObject + NetworkItemPickup.")]
+        [Tooltip("Fallback prefab to spawn when dropping items if the ItemDefinition has no world pickup rules prefab set. Must have NetworkObject + NetworkItemPickup.")]
         [SerializeField] private NetworkObject pickupPrefab;
 
         [Header("Drop Placement")]
@@ -72,15 +72,16 @@ namespace RoachRace.Networking
             NetworkObject prefabToSpawn = null;
             if (inventory.TryResolveDefinition(slot.ItemId, out var def) && def != null)
             {
-                if (!def.canDrop)
+                if (!def.CanDropFromInventory)
                     return;
 
-                if (def.worldPickupPrefab != null)
+                var worldPrefab = def.WorldPickupPrefab;
+                if (worldPrefab != null)
                 {
-                    prefabToSpawn = def.worldPickupPrefab.GetComponent<NetworkObject>();
+                    prefabToSpawn = worldPrefab.GetComponent<NetworkObject>();
                     if (prefabToSpawn == null)
                     {
-                        Debug.LogError($"[{nameof(NetworkInventoryDropper)}] ItemDefinition '{def.name}' has WorldPickupPrefab '{def.worldPickupPrefab.name}' but it has no NetworkObject.", gameObject);
+                        Debug.LogError($"[{nameof(NetworkInventoryDropper)}] Invalid world pickup prefab for '{gameObject.name}': ItemDefinition '{def.name}' has prefab '{worldPrefab.name}' but it has no NetworkObject.", gameObject);
                         return;
                     }
                 }
@@ -92,7 +93,7 @@ namespace RoachRace.Networking
             prefabToSpawn ??= pickupPrefab;
             if (prefabToSpawn == null)
             {
-                Debug.LogError($"[{nameof(NetworkInventoryDropper)}] No drop prefab is available for '{gameObject.name}'. Assign a fallback pickupPrefab or set ItemDefinition.WorldPickupPrefab.", gameObject);
+                Debug.LogError($"[{nameof(NetworkInventoryDropper)}] No drop prefab is available for '{gameObject.name}'. Assign a fallback pickupPrefab or set an ItemDefinition world pickup rules prefab.", gameObject);
                 return;
             }
 
