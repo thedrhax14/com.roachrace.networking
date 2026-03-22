@@ -20,7 +20,7 @@ namespace RoachRace.Networking.Combat
     /// - Status effects (and other gameplay systems) operate on inventory transactions, not bespoke health-meter code.<br/>
     /// - This component localizes the “health is special” mapping to one place, rather than spreading it across effect implementations.
     /// </summary>
-    public sealed class NetworkHealthInventoryDeltaObserver : NetworkBehaviour, INetworkPlayerInventoryDeltaObserver
+    public sealed class NetworkHealthObserver : NetworkBehaviour, INetworkPlayerInventoryDeltaObserver
     {
         [Header("Health Asset")]
         [SerializeField]
@@ -44,20 +44,20 @@ namespace RoachRace.Networking.Combat
 
             if (inventory == null && !TryGetComponent(out inventory))
             {
-                Debug.LogError($"[{nameof(NetworkHealthInventoryDeltaObserver)}] Missing required reference on '{gameObject.name}': inventory.", gameObject);
-                throw new InvalidOperationException($"[{nameof(NetworkHealthInventoryDeltaObserver)}] Missing required reference on '{gameObject.name}': inventory.");
+                Debug.LogError($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': inventory.", gameObject);
+                throw new InvalidOperationException($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': inventory.");
             }
 
             if (networkHealth == null && !TryGetComponent(out networkHealth))
             {
-                Debug.LogError($"[{nameof(NetworkHealthInventoryDeltaObserver)}] Missing required reference on '{gameObject.name}': networkHealth.", gameObject);
-                throw new InvalidOperationException($"[{nameof(NetworkHealthInventoryDeltaObserver)}] Missing required reference on '{gameObject.name}': networkHealth.");
+                Debug.LogError($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': networkHealth.", gameObject);
+                throw new InvalidOperationException($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': networkHealth.");
             }
 
             if (healthAsset == null)
             {
-                Debug.LogError($"[{nameof(NetworkHealthInventoryDeltaObserver)}] Missing required reference on '{gameObject.name}': healthAsset.", gameObject);
-                throw new InvalidOperationException($"[{nameof(NetworkHealthInventoryDeltaObserver)}] Missing required reference on '{gameObject.name}': healthAsset.");
+                Debug.LogError($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': healthAsset.", gameObject);
+                throw new InvalidOperationException($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': healthAsset.");
             }
 
             inventory.AddServerDeltaObserver(this);
