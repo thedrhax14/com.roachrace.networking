@@ -1,11 +1,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using FishNet;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
-using RoachRace.Controls;
 using RoachRace.Data;
 using RoachRace.UI.Models;
 using UnityEngine;
@@ -15,10 +13,11 @@ using UnityEngine.Serialization;
 namespace RoachRace.Networking.Combat
 {
     /// <summary>
-    /// Core component for anything that can take damage.
-    /// Handles server-side health state and client-side effect broadcasting.
+    /// Core networked health + damage component.<br/>
+    /// Handles server-authoritative health state and broadcasts damage/death to clients for VFX/UI.<br/>
+    /// Inventory-driven damage should be applied via server systems (e.g., inventory delta observers) calling <see cref="TryConsume(DamageInfo)" />.
     /// </summary>
-    public class NetworkHealth : PlayerResource, IDamageable
+    public class NetworkHealth : NetworkBehaviour
     {
         [Header("Health Settings")]
         [FormerlySerializedAs("maxHealth")]
@@ -47,8 +46,8 @@ namespace RoachRace.Networking.Combat
         public int CurrentHealth => _currentHealth.Value;
         public int MaxHealth => _maxHealth.Value;
 
-        public override float Current => _currentHealth.Value;
-        public override float Max => _maxHealth.Value;
+        public float Current => _currentHealth.Value;
+        public float Max => _maxHealth.Value;
         public bool IsAlive => _currentHealth.Value > 0;
 
         public void Heal(int amount)
@@ -113,7 +112,6 @@ namespace RoachRace.Networking.Combat
             _maxHealth.OnChange += OnMaxHealthSyncChanged;
             // Initial update for UI or listeners
             OnHealthChanged?.Invoke(_currentHealth.Value, _maxHealth.Value);
-            NotifyChanged();
         }
 
         public override void OnStopClient()
@@ -126,13 +124,11 @@ namespace RoachRace.Networking.Combat
         private void OnHealthSyncChanged(int prev, int next, bool asServer)
         {
             OnHealthChanged?.Invoke(next, _maxHealth.Value);
-            NotifyChanged();
         }
 
         private void OnMaxHealthSyncChanged(int prev, int next, bool asServer)
         {
             OnHealthChanged?.Invoke(_currentHealth.Value, next);
-            NotifyChanged();
         }
 
         // Server-only entry point
@@ -202,8 +198,10 @@ namespace RoachRace.Networking.Combat
         [Server]
         void StartHandleDeath(DamageInfo damageInfo)
         {
-            foreach (var observer in _serverDeathObservers.ToArray()) {
-                Debug.Log($"[{nameof(NetworkHealth)}] Notifying server death observer {observer.GetType().Name} of death on '{gameObject.name}'");
+            var observersSnapshot = new List<INetworkHealthServerDeathObserver>(_serverDeathObservers);
+            foreach (var observer in observersSnapshot)
+            {
+                Debug.Log($"[{nameof(NetworkHealth)}] Notifying server death observer {observer.GetType().Name} of death on '{gameObject.name}'", gameObject);
                 observer.OnNetworkHealthServerDied(this, damageInfo);
             }
             DeathLogBroadcaster.Instance.ServerPublishDeath(this, damageInfo);
@@ -228,19 +226,6 @@ namespace RoachRace.Networking.Combat
             objectToDespawn.Despawn();
         }
 
-        [Server]
-        public override bool TryConsume(float amount)
-        {
-            // Health is not typically consumed as a cost.
-            return false;
-        }
-
-        [Server]
-        public override void Add(float amount)
-        {
-            Heal(Mathf.CeilToInt(amount));
-        }
-
         [ObserversRpc(ExcludeServer = true)]
         private void RpcOnHit(DamageInfo info)
         {
@@ -248,20 +233,19 @@ namespace RoachRace.Networking.Combat
         }
 
 #if UNITY_EDITOR
-        private int GetLocalPlayerObjectId()
+        /// <summary>
+        /// Editor-only helper to resolve the local connection's ClientId ("real user") when running as host/client in-editor.<br/>
+        /// Returns -1 when no local client connection is available.
+        /// </summary>
+        private int GetLocalClientId()
         {
             var networkManager = InstanceFinder.NetworkManager;
             if (networkManager != null && networkManager.ClientManager != null && networkManager.ClientManager.Connection != null)
             {
-                HashSet<NetworkObject> ownedObjects = networkManager.ClientManager.Connection.Objects;
-                if (ownedObjects != null && ownedObjects.Count > 0)
-                {
-                    // Return the first owned object's ID (typically the player)
-                    return ownedObjects.First().ObjectId;
-                }
+                return networkManager.ClientManager.Connection.ClientId;
             }
 
-            // Fallback: return -1 if no owned objects found
+            // Fallback: return -1 if no local client connection is available.
             return -1;
         }
 
@@ -283,7 +267,7 @@ namespace RoachRace.Networking.Combat
                 return;
 
             int amount = Mathf.Max(1, _currentHealth.Value);
-            int localPlayerId = GetLocalPlayerObjectId();
+            int localClientId = GetLocalClientId();
             
             var info = new DamageInfo
             {
@@ -291,7 +275,7 @@ namespace RoachRace.Networking.Combat
                 Type = DamageType.Environment,
                 Point = transform.position,
                 Normal = Vector3.up,
-                InstigatorId = localPlayerId,
+                InstigatorId = localClientId,
                 Source = new DamageSource
                 {
                     AttackerName = "Editor",

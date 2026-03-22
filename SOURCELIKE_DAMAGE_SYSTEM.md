@@ -12,14 +12,10 @@ This is **production-grade architecture**, not a toy example.
 
 # 1. Core damage contracts (unified)
 
-### `IDamageable.cs`
+### Damage entrypoint
 
-```csharp
-public interface IDamageable
-{
-    void TakeDamage(DamageInfo info);
-}
-```
+Legacy note: this repo previously described an `IDamageable` interface here, but that abstraction has been removed.<br/>
+Server-side gameplay code should apply damage by constructing a `DamageInfo` and calling `NetworkHealth.TryConsume(DamageInfo)` on the target.
 
 ---
 
@@ -100,7 +96,7 @@ This automatically handles:
 ```csharp
 using UnityEngine;
 
-public abstract class Damageable : MonoBehaviour, IDamageable
+public abstract class Damageable : MonoBehaviour
 {
     [Header("Health")]
     public float maxHealth = 100f;
@@ -175,7 +171,7 @@ public class BreakableProp : Damageable
         });
 
         // Damage the other object too (symmetrical)
-        if (collision.gameObject.TryGetComponent<IDamageable>(out var target))
+        if (collision.gameObject.TryGetComponent<Damageable>(out var target))
         {
             target.TakeDamage(new DamageInfo
             {

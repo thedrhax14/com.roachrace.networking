@@ -1,12 +1,11 @@
 using FishNet.Connection;
 using FishNet.Object;
-using RoachRace.Controls;
 using RoachRace.Networking.Input;
 using UnityEngine;
 
 namespace RoachRace.Networking
 {
-    public class NetworkGhostController : NetworkBehaviour, IPlayerResourcesProvider
+    public class NetworkGhostController : NetworkBehaviour
     {
         [Header("Dependencies")]
         public GhostCameraController cameraController;
@@ -165,11 +164,6 @@ namespace RoachRace.Networking
             if (cameraTransform != null) return cameraTransform;
             if (cameraController != null) return cameraController.transform;
             return null;
-        }
-
-        public PlayerResource[] GetPlayerResources()
-        {
-            return GetComponentsInChildren<PlayerResource>(true);
         }
 
         #endregion
