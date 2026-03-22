@@ -41,6 +41,8 @@ namespace RoachRace.Networking
         public override void OnStartServer()
         {
             base.OnStartServer();
+
+            NetworkPlayerRegistry.Register(this);
             
             // Initialize player data on server
             InitializePlayerData();
@@ -93,6 +95,8 @@ namespace RoachRace.Networking
         public override void OnStopServer()
         {
             base.OnStopServer();
+
+            NetworkPlayerRegistry.Unregister(this);
             CleanupPlayerData();
             RemovePlayerFromRoom();
             

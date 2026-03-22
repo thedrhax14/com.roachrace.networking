@@ -61,6 +61,11 @@ namespace RoachRace.Networking.Combat
             return entry;
         }
 
+        /// <summary>
+        /// Builds the attacker display data for the death log entry.<br/>
+        /// Prefers resolving the instigator ClientId into a <see cref="NetworkPlayer"/> via <see cref="NetworkPlayerRegistry"/>
+        /// to avoid brittle scene hierarchy assumptions.
+        /// </summary>
         private static DeathLogActor BuildAttacker(DamageInfo damageInfo)
         {
             var actor = new DeathLogActor
@@ -70,9 +75,17 @@ namespace RoachRace.Networking.Combat
                 TeamId = -1
             };
 
+            // Fast path: resolve from registry by instigator ClientId.
+            if (damageInfo.InstigatorId >= 0 && NetworkPlayerRegistry.TryGetPlayer(damageInfo.InstigatorId, out NetworkPlayer regPlayer))
+            {
+                if (string.IsNullOrWhiteSpace(actor.Name)) actor.Name = regPlayer.PlayerName;
+                if (string.IsNullOrWhiteSpace(actor.AvatarUrl)) actor.AvatarUrl = regPlayer.ImageUrl;
+                actor.TeamId = (int)regPlayer.Team;
+            }
+
             // Best-effort: resolve team/name/avatar from the instigator ClientId (real user) by finding an owned
             // NetworkObject with a NetworkPlayer component.
-            if (InstanceFinder.NetworkManager != null && damageInfo.InstigatorId >= 0)
+            if (InstanceFinder.NetworkManager != null && damageInfo.InstigatorId >= 0 && string.IsNullOrWhiteSpace(actor.Name))
             {
                 if (InstanceFinder.NetworkManager.ServerManager != null &&
                     InstanceFinder.NetworkManager.ServerManager.Clients != null &&
@@ -101,6 +114,10 @@ namespace RoachRace.Networking.Combat
             return actor;
         }
 
+        /// <summary>
+        /// Builds the victim display data for the death log entry.<br/>
+        /// Prefers resolving the victim owner ClientId via <see cref="NetworkPlayerRegistry"/> when possible.
+        /// </summary>
         private static DeathLogActor BuildVictim(NetworkHealth victimHealth)
         {
             var actor = new DeathLogActor
@@ -112,6 +129,18 @@ namespace RoachRace.Networking.Combat
 
             if (victimHealth != null)
             {
+                int victimClientId = victimHealth.OwnerId;
+                if (victimClientId < 0 && victimHealth.objectToDespawn != null)
+                    victimClientId = victimHealth.objectToDespawn.OwnerId;
+
+                if (victimClientId >= 0 && NetworkPlayerRegistry.TryGetPlayer(victimClientId, out NetworkPlayer regPlayer))
+                {
+                    actor.Name = regPlayer.PlayerName;
+                    actor.AvatarUrl = regPlayer.ImageUrl;
+                    actor.TeamId = (int)regPlayer.Team;
+                    return actor;
+                }
+
                 var player = victimHealth.GetComponentInParent<RoachRace.Networking.NetworkPlayer>();
                 if (player != null)
                 {
