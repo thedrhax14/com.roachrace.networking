@@ -27,27 +27,27 @@ namespace RoachRace.Networking.Combat
         [Tooltip("ItemDefinition id used as the key for health units in inventory.")]
         private ItemDefinition healthAsset;
 
-        [Header("Dependencies (optional overrides)")]
-        [SerializeField]
-        private NetworkPlayerInventory inventory;
-
-        [SerializeField]
-        private NetworkHealth networkHealth;
+        NetworkPlayerInventory inventory;
+        NetworkHealth networkHealth;
 
         public override void OnStartServer()
         {
             base.OnStartServer();
 
-            if (inventory == null && !TryGetComponent(out inventory))
+            if (!TryGetComponent(out inventory))
             {
                 Debug.LogError($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': inventory.", gameObject);
                 throw new InvalidOperationException($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': inventory.");
             }
 
-            if (networkHealth == null && !TryGetComponent(out networkHealth))
+            if (!TryGetComponent(out networkHealth))
             {
-                Debug.LogError($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': networkHealth.", gameObject);
-                throw new InvalidOperationException($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': networkHealth.");
+                networkHealth = GetComponentInChildren<NetworkHealth>();
+                if (networkHealth == null)
+                {
+                    Debug.LogError($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': networkHealth.", gameObject);
+                    throw new InvalidOperationException($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': networkHealth.");
+                }
             }
 
             if (healthAsset == null)

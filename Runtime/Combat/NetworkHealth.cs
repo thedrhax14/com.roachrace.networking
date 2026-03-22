@@ -207,7 +207,7 @@ namespace RoachRace.Networking.Combat
             DeathLogBroadcaster.Instance.ServerPublishDeath(this, damageInfo);
 
             bool waitForOwnershipTransfer = objectToDespawn.OwnerId != -1;
-            objectToDespawn.GiveOwnership(null);
+            objectToDespawn.RemoveOwnership();
             if (objectToSpawn) Spawn(Instantiate(objectToSpawn, transform.position, transform.rotation));
             if (waitForOwnershipTransfer) StartCoroutine(HandleDeathCoroutine());
             else objectToDespawn.Despawn();

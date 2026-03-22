@@ -10,8 +10,6 @@ using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
 
-
-
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -21,7 +19,7 @@ using InventorySlotState = RoachRace.Data.InventorySlotState;
 namespace RoachRace.Networking.Inventory
 {
     [DisallowMultipleComponent]
-    [RequireComponent(typeof(NetworkPlayerLookState))]
+    [RequireComponent(typeof(NetworkPlayerLookState), typeof(PlayerItemRegistry))]
     /// <summary>
     /// Network-authoritative inventory for a player.<br/>
     /// <br/>
