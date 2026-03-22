@@ -1219,6 +1219,12 @@ namespace RoachRace.Networking.Inventory
         [Server]
         public int ConsumeByItemId(ushort itemId, int amount, int instigatorConnectionId = -1, int instigatorObjectId = -1)
         {
+            return ConsumeByItemIdInternal(itemId, amount, weaponIconKey: string.Empty, instigatorConnectionId, instigatorObjectId);
+        }
+
+        [Server]
+        private int ConsumeByItemIdInternal(ushort itemId, int amount, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId)
+        {
             if (itemId == 0) return 0;
             if (amount <= 0) return 0;
 
@@ -1262,7 +1268,7 @@ namespace RoachRace.Networking.Inventory
 
             int consumed = amount - remaining;
             if (consumed != 0)
-                NotifyServerDeltaObservers(itemId, -consumed, instigatorConnectionId, instigatorObjectId);
+                NotifyServerDeltaObservers(itemId, -consumed, weaponIconKey, instigatorConnectionId, instigatorObjectId);
 
             return consumed;
         }
@@ -1270,33 +1276,36 @@ namespace RoachRace.Networking.Inventory
         /// <summary>
         /// Server-only: applies a signed delta to stacks of <paramref name="itemId"/>.<br/>
         /// Delta convention: negative = consume, positive = add.<br/>
-        /// Includes instigator context for observers: both connection (real user) and object (combat attribution).
+        /// Includes attribution context for observers:<br/>
+        /// - <paramref name="weaponIconKey"/> for UI-facing source labeling (eg killfeed icon key).<br/>
+        /// - Instigator connection (real user) and object (combat attribution).
         /// </summary>
         /// <param name="itemId">ItemDefinition id.</param>
         /// <param name="delta">Signed delta to apply.</param>
+        /// <param name="weaponIconKey">Optional UI-facing weapon key to attribute the delta (eg killfeed icon key). Empty when not applicable.</param>
         /// <param name="instigatorConnectionId">ClientId of the instigator connection, or -1 for environment/unknown.</param>
         /// <param name="instigatorObjectId">NetworkObjectId of the instigator object, or -1 for environment/unknown.</param>
         /// <returns>The delta actually applied (may be 0 or reduced magnitude).</returns>
         [Server]
-        public int ApplyDeltaByItemId(ushort itemId, int delta, int instigatorConnectionId = -1, int instigatorObjectId = -1)
+        public int ApplyDeltaByItemId(ushort itemId, int delta, string weaponIconKey, int instigatorConnectionId = -1, int instigatorObjectId = -1)
         {
             if (itemId == 0) return 0;
             if (delta == 0) return 0;
 
             if (delta < 0)
             {
-                int consumed = ConsumeByItemId(itemId, -delta, instigatorConnectionId, instigatorObjectId);
+                int consumed = ConsumeByItemIdInternal(itemId, -delta, weaponIconKey, instigatorConnectionId, instigatorObjectId);
                 return -consumed;
             }
 
             int added = AddItemUpTo(itemId, delta);
             if (added != 0)
-                NotifyServerDeltaObservers(itemId, added, instigatorConnectionId, instigatorObjectId);
+                NotifyServerDeltaObservers(itemId, added, weaponIconKey, instigatorConnectionId, instigatorObjectId);
             return added;
         }
 
         [Server]
-        private void NotifyServerDeltaObservers(ushort itemId, int appliedDelta, int instigatorConnectionId, int instigatorObjectId)
+        private void NotifyServerDeltaObservers(ushort itemId, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId)
         {
             if (_serverDeltaObservers.Count == 0) return;
 
@@ -1304,7 +1313,7 @@ namespace RoachRace.Networking.Inventory
             foreach (var observer in _serverDeltaObservers.ToArray())
             {
                 if (observer == null) continue;
-                observer.OnServerInventoryItemDeltaApplied(this, itemId, appliedDelta, instigatorConnectionId, instigatorObjectId);
+                observer.OnServerInventoryItemDeltaApplied(this, itemId, appliedDelta, weaponIconKey, instigatorConnectionId, instigatorObjectId);
             }
         }
 

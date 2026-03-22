@@ -12,7 +12,6 @@ namespace RoachRace.Networking.Extensions
         /// </summary>
         /// <param name="instigatorId">ClientId of the instigator connection (real user), or -1 for environment/unknown.</param>
         /// <param name="amount">Amount of damage to deal</param>
-        /// <param name="type">Type of damage</param>
         /// <param name="point">World position where damage occurred</param>
         /// <param name="normal">Surface normal at impact point</param>
         /// <param name="source">Damage source details (attacker name, weapon, etc)</param>
@@ -20,7 +19,6 @@ namespace RoachRace.Networking.Extensions
         public static DamageInfo CreateDamageInfo(
             int instigatorId,
             int amount,
-            DamageType type = DamageType.Contact,
             Vector3 point = default,
             Vector3 normal = default,
             DamageSource source = default)
@@ -29,7 +27,6 @@ namespace RoachRace.Networking.Extensions
                 {
                     InstigatorId = instigatorId,
                     Amount = amount,
-                    Type = type,
                     Point = point,
                     Normal = normal,
                     Source = source
@@ -47,7 +44,6 @@ namespace RoachRace.Networking.Extensions
         /// </summary>
         /// <param name="conn">The network connection that initiated the damage</param>
         /// <param name="amount">Amount of damage to deal</param>
-        /// <param name="type">Type of damage</param>
         /// <param name="point">World position where damage occurred</param>
         /// <param name="normal">Surface normal at impact point</param>
         /// <param name="source">Damage source details (attacker name, weapon, etc)</param>
@@ -55,7 +51,6 @@ namespace RoachRace.Networking.Extensions
         public static DamageInfo CreateDamageInfo(
             this NetworkConnection conn,
             int amount,
-            DamageType type = DamageType.Contact,
             Vector3 point = default,
             Vector3 normal = default,
             DamageSource source = default)
@@ -64,7 +59,6 @@ namespace RoachRace.Networking.Extensions
             {
                 InstigatorId = (int)conn.ClientId,
                 Amount = amount,
-                Type = type,
                 Point = point,
                 Normal = normal,
                 Source = source
@@ -84,7 +78,6 @@ namespace RoachRace.Networking.Extensions
         /// </summary>
         /// <param name="netObj">The NetworkObject that initiated the damage (attacker)</param>
         /// <param name="amount">Amount of damage to deal</param>
-        /// <param name="type">Type of damage</param>
         /// <param name="point">World position where damage occurred</param>
         /// <param name="normal">Surface normal at impact point</param>
         /// <param name="source">Damage source details (attacker name, weapon, etc)</param>
@@ -92,7 +85,6 @@ namespace RoachRace.Networking.Extensions
         public static DamageInfo CreateDamageInfo(
             this NetworkObject netObj,
             int amount,
-            DamageType type = DamageType.Contact,
             Vector3 point = default,
             Vector3 normal = default,
             DamageSource source = default)
@@ -101,7 +93,6 @@ namespace RoachRace.Networking.Extensions
             {
                 InstigatorId = netObj.OwnerId,
                 Amount = amount,
-                Type = type,
                 Point = point,
                 Normal = normal,
                 Source = source

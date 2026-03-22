@@ -1,5 +1,6 @@
 using FishNet.Connection;
 using FishNet.Object;
+using RoachRace.Controls;
 using RoachRace.Networking.Input;
 using UnityEngine;
 

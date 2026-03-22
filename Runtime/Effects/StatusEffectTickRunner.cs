@@ -332,7 +332,8 @@ namespace RoachRace.Networking.Effects
             if (units == 0)
                 return;
 
-            inventory.ApplyDeltaByItemId(asset.id, units, instigatorConnectionId: instigatorConnectionId, instigatorObjectId: instigatorObjectId);
+            string weaponIconKey = !string.IsNullOrWhiteSpace(def.EffectId) ? def.EffectId : def.name;
+            inventory.ApplyDeltaByItemId(asset.id, units, weaponIconKey, instigatorConnectionId: instigatorConnectionId, instigatorObjectId: instigatorObjectId);
         }
 
         private void RefreshDuration(ActiveEffect effect, StatusEffectDefinition def, uint nowTick)

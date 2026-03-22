@@ -27,7 +27,7 @@ namespace RoachRace.Networking.Combat
             GameObject otherObject,
             int selfInstigatorId,
             int otherInstigatorId,
-            DamageType damageType = DamageType.Impact)
+            string weaponIconKey = "Impact")
         {
             if (!IsServerInitialized)
                 return;
@@ -52,7 +52,7 @@ namespace RoachRace.Networking.Combat
                 contactPoint,
                 contactNormal,
                 selfInstigatorId,
-                damageType
+                weaponIconKey
             );
 
             DealDamage(
@@ -61,7 +61,7 @@ namespace RoachRace.Networking.Combat
                 contactPoint,
                 -contactNormal,
                 otherInstigatorId,
-                damageType
+                weaponIconKey
             );
         }
 
@@ -71,7 +71,7 @@ namespace RoachRace.Networking.Combat
             Vector3 point,
             Vector3 normal,
             int instigatorId,
-            DamageType type)
+            string weaponIconKey)
         {
             if (amount <= 0f)
                 return;
@@ -85,11 +85,16 @@ namespace RoachRace.Networking.Combat
             var damageInfo = new DamageInfo
             {
                 Amount = amount,
-                Type = type,
                 Point = point,
                 Normal = normal,
                 InstigatorId = instigatorId,
-                Source = default
+                Source = new DamageSource
+                {
+                    AttackerName = string.Empty,
+                    AttackerAvatarUrl = string.Empty,
+                    SourcePosition = point,
+                    WeaponIconKey = weaponIconKey
+                }
             };
 
             health.TryConsume(damageInfo);

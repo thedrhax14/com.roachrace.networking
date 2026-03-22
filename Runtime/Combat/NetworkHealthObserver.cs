@@ -27,10 +27,6 @@ namespace RoachRace.Networking.Combat
         [Tooltip("ItemDefinition id used as the key for health units in inventory.")]
         private ItemDefinition healthAsset;
 
-        [SerializeField]
-        [Tooltip("Damage type used when inventory deltas consume health units.")]
-        private DamageType damageType = DamageType.Environment;
-
         [Header("Dependencies (optional overrides)")]
         [SerializeField]
         private NetworkPlayerInventory inventory;
@@ -71,7 +67,7 @@ namespace RoachRace.Networking.Combat
             base.OnStopServer();
         }
 
-        public void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, ushort itemId, int appliedDelta, int instigatorConnectionId, int instigatorObjectId)
+        public void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, ushort itemId, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId)
         {
             if (healthAsset == null)
                 return;
@@ -90,12 +86,20 @@ namespace RoachRace.Networking.Combat
 
             var damageAmount = -appliedDelta;
 
+            DamageSource source = new DamageSource
+            {
+                AttackerName = string.Empty,
+                AttackerAvatarUrl = string.Empty,
+                SourcePosition = transform.position,
+                WeaponIconKey = weaponIconKey
+            };
+
             DamageInfo damageInfo = NetworkExtensions.CreateDamageInfo(
                 instigatorConnectionId,
                 damageAmount,
-                damageType,
                 transform.position,
-                Vector3.up);
+                Vector3.up,
+                source);
 
             networkHealth.TryConsume(damageInfo);
         }

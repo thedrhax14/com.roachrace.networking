@@ -55,7 +55,6 @@ namespace RoachRace.Networking.Combat
                 Attacker = BuildAttacker(damageInfo),
                 Victim = BuildVictim(victimHealth),
                 WeaponIconKey = damageInfo.Source.WeaponIconKey,
-                DamageType = damageInfo.Type,
                 ServerTick = InstanceFinder.TimeManager != null ? InstanceFinder.TimeManager.Tick : 0u
             };
 

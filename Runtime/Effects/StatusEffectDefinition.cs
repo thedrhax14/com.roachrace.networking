@@ -5,6 +5,13 @@ using UnityEngine;
 
 namespace RoachRace.Networking.Effects
 {
+    /// <summary>
+    /// Authoring asset for a server-applied tick-based status effect.<br/>
+    /// <br/>
+    /// Typical usage:<br/>
+    /// - Added to a <c>StatusEffectTickRunner</c> on the server to apply discrete inventory deltas over time.<br/>
+    /// - When the effect applies a delta, <see cref="effectId"/> is used as the UI-facing <c>WeaponIconKey</c> attribution when non-empty (eg killfeed icon key).<br/>
+    /// </summary>
     [CreateAssetMenu(menuName = "RoachRace/Effects/Status Effect Definition", fileName = "StatusEffectDefinition")]
     public class StatusEffectDefinition : ScriptableObject
     {
@@ -35,7 +42,7 @@ namespace RoachRace.Networking.Effects
         }
 
         [Header("Identity")]
-        [Tooltip("Optional stable id for debugging / lookups.")]
+        [Tooltip("Optional stable id for debugging / lookups. When non-empty, this is also used as the WeaponIconKey attribution for inventory deltas.")]
         [SerializeField] private string effectId = "";
 
         [Header("Target")]

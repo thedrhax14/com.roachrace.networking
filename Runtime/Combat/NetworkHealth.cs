@@ -172,7 +172,7 @@ namespace RoachRace.Networking.Combat
             if (damageEventModel == null)
             {
                 // Debug.LogWarning($"[{nameof(NetworkHealth)}] DamageEventModel is not assigned on '{gameObject.name}'. Damage events will not be published.", gameObject);
-                // Debug.Log($"[{nameof(NetworkHealth)}] DamageInfo: Amount={damageInfo.Amount}, Type={damageInfo.Type}, InstigatorId={damageInfo.InstigatorId}", gameObject);
+                // Debug.Log($"[{nameof(NetworkHealth)}] DamageInfo: Amount={damageInfo.Amount}, InstigatorId={damageInfo.InstigatorId}", gameObject);
                 return;
             }
 
@@ -272,7 +272,6 @@ namespace RoachRace.Networking.Combat
             var info = new DamageInfo
             {
                 Amount = amount,
-                Type = DamageType.Environment,
                 Point = transform.position,
                 Normal = Vector3.up,
                 InstigatorId = localClientId,
@@ -281,7 +280,7 @@ namespace RoachRace.Networking.Combat
                     AttackerName = "Editor",
                     AttackerAvatarUrl = string.Empty,
                     SourcePosition = transform.position,
-                    WeaponIconKey = string.Empty,
+                    WeaponIconKey = "Editor",
                 }
             };
 

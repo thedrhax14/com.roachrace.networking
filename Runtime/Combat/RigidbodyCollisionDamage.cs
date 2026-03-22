@@ -80,7 +80,7 @@ namespace RoachRace.Networking.Combat
             ApplySymmetricDamage(
                 collision,
                 impulse * impulseToDamage,
-                DamageType.Impact
+                weaponIconKey: "Impact"
             );
         }
 
@@ -90,7 +90,7 @@ namespace RoachRace.Networking.Combat
         private void ApplySymmetricDamage(
             Collision collision,
             float baseDamage,
-            DamageType type)
+            string weaponIconKey)
         {
             ContactPoint contact = collision.GetContact(0);
 
@@ -113,9 +113,15 @@ namespace RoachRace.Networking.Combat
                 {
                     var selfDamageInfo = GetComponent<NetworkObject>().CreateDamageInfo(
                         amount: selfDamage,
-                        type: type,
                         point: contact.point,
-                        normal: contact.normal
+                        normal: contact.normal,
+                        source: new DamageSource
+                        {
+                            AttackerName = string.Empty,
+                            AttackerAvatarUrl = string.Empty,
+                            SourcePosition = contact.point,
+                            WeaponIconKey = weaponIconKey
+                        }
                     );
                     
                     selfHealth.TryConsume(selfDamageInfo);
@@ -129,9 +135,15 @@ namespace RoachRace.Networking.Combat
                 {
                     var otherDamageInfo = collision.gameObject.GetComponent<NetworkObject>().CreateDamageInfo(
                         amount: otherDamage,
-                        type: type,
                         point: contact.point,
-                        normal: -contact.normal
+                        normal: -contact.normal,
+                        source: new DamageSource
+                        {
+                            AttackerName = string.Empty,
+                            AttackerAvatarUrl = string.Empty,
+                            SourcePosition = contact.point,
+                            WeaponIconKey = weaponIconKey
+                        }
                     );
                     
                     otherHealth.TryConsume(otherDamageInfo);
