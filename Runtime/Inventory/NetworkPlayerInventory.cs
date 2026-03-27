@@ -653,41 +653,6 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
-        /// Requests using the first available stack/slot matching <paramref name="itemId"/>.<br/>
-        /// <br/>
-        /// Typical behavior:<br/>
-        /// - If the item implements <see cref="IRoachRaceAimItem"/>, aim data is read from <see cref="lookState"/> and applied before use.<br/>
-        /// - If running on the server, use happens immediately.<br/>
-        /// - Otherwise, only the local owner can request use via RPC.<br/>
-        /// <br/>
-        /// Notes:<br/>
-        /// - The server performs validation via <see cref="CanUseByItemId"/> and will return <c>false</c> if unusable.<br/>
-        /// </summary>
-        /// <returns>
-        /// <c>true</c> request was accepted/queued (or applied immediately on server).<br/>
-        /// <c>false</c> invalid <paramref name="itemId"/> (0), caller is not permitted (non-owner client), or the server-side use failed.<br/>
-        /// </returns>
-        private bool TryGetLookAim(bool preferLocal, out Vector3 origin, out Vector3 direction)
-        {
-            return lookState.TryGetLook(out origin, out direction, preferLocal);
-        }
-
-        private bool TryApplyAimFromLookState(IRoachRaceItem item, bool preferLocal, int slotIndex, ushort itemId)
-        {
-            if (item is not IRoachRaceAimItem aimItem)
-                return true;
-
-            if (!TryGetLookAim(preferLocal, out var origin, out var direction))
-            {
-                ReportUseFailed(itemId, slotIndex, ItemUseFailReason.RequiresAimData);
-                return false;
-            }
-
-            aimItem.SetAim(origin, direction);
-            return true;
-        }
-
-        /// <summary>
         /// Server-only check for whether <paramref name="itemId"/> can currently be used.<br/>
         /// <br/>
         /// Typical behavior:<br/>
@@ -854,18 +819,8 @@ namespace RoachRace.Networking.Inventory
                 return false;
             }
 
-            // Some items rely on client-derived aim data (e.g., raycast from camera).
-            if (!TryApplyAimFromLookState(item, preferLocal: false, slotIndex, itemId))
-                return false;
-
             int seed = UnityEngine.Random.Range(0, int.MaxValue);
             item.InitializeUseContext(seed, OwnerId, true, gameObject);
-
-            // Aim may have already been set above for gating; set again here to ensure the current use context
-            // sees the latest values even if the item overwrote aim during gating.
-            if (!TryApplyAimFromLookState(item, preferLocal: false, slotIndex, itemId))
-                return false;
-
             item.UseStart();
 
             // Consume one stack entry only when the definition says so.
@@ -1281,17 +1236,8 @@ namespace RoachRace.Networking.Inventory
                 return false;
             }
 
-            // Some items rely on client-derived aim data (e.g., raycast from camera).
-            if (!TryApplyAimFromLookState(item, preferLocal: false, idx, slot.ItemId))
-                return false;
-
             int seed = UnityEngine.Random.Range(0, int.MaxValue);
             item.InitializeUseContext(seed, OwnerId, true, gameObject);
-
-            // Aim may have already been set above for gating; set again here to ensure the current use context
-            // sees the latest values even if the item overwrote aim during gating.
-            if (!TryApplyAimFromLookState(item, preferLocal: false, idx, slot.ItemId))
-                return false;
 
             item.UseStart();
             
@@ -1394,15 +1340,13 @@ namespace RoachRace.Networking.Inventory
         /// Expected context:<br/>
         /// - Runs on clients which are observing this NetworkObject (server excluded).<br/>
         /// </summary>
-        [ObserversRpc(ExcludeServer = true)]
+        [ObserversRpc(ExcludeServer = true, ExcludeOwner = true)]
         private void UseItemObserversRpc(ushort itemId, int seed)
         {
             if (itemRegistry == null) return;
             if (!itemRegistry.TryGetItem(itemId, out var item)) return;
 
             item.InitializeUseContext(seed, OwnerId, false, gameObject);
-            if (item is IRoachRaceAimItem)
-                TryApplyAimFromLookState(item, preferLocal: false, slotIndex: -1, itemId);
             item.UseStart();
         }
     }
