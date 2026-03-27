@@ -649,11 +649,6 @@ namespace RoachRace.Networking.Inventory
         /// </returns>
         public bool TryUseSelected()
         {
-            if (IsServerInitialized)
-            {
-                return ServerUseSelected();
-            }
-
             if (!IsOwner) return false;
             TryBeginPredictedSelectedUse();
             UseSelectedServerRpc();
