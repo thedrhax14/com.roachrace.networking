@@ -438,11 +438,11 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
-        /// Owner-client failure callback used to cancel predicted item use when the server rejects the request.<br/>
+        /// Owner-client failure callback used to recover local state when the server rejects the request.<br/>
         ///<br/>
         /// Typical behavior:<br/>
         /// - Matches the currently selected item against the reported failure.<br/>
-        /// - Stops local predicted use without sending another RPC.<br/>
+        /// - Resets local ammo/UI state without sending another RPC.<br/>
         /// </summary>
         /// <param name="failure">Failure information reported by the server.</param>
         private void OnLocalItemUseFailed(ItemUseFailure failure)
@@ -461,7 +461,6 @@ namespace RoachRace.Networking.Inventory
             if (item is MonoBehaviour itemBehaviour && itemBehaviour.TryGetComponent<Weapons.NetworkWeaponMagazine>(out var magazine))
                 magazine.ResetPredictedAmmoToServer();
 
-            EndPredictedUseLocally(item);
         }
 
         private void OnInventoryReadyChanged(bool prev, bool next, bool asServer)
@@ -574,18 +573,6 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
-        /// Attempts to resolve the <see cref="ItemInstance"/> for the currently selected slot.
-        /// </summary>
-        /// <remarks>
-        /// Use this when you need the definition binding (id/definition) alongside the concrete item component.
-        /// Returns <c>false</c> when the selected slot is empty, out of range, or the instance is not registered.
-        /// </remarks>
-        public bool TryGetSelectedItemInstance(out ItemInstance instance)
-        {
-            return TryGetSelectedItemInstance(out _, out instance);
-        }
-
-        /// <summary>
         /// Attempts to resolve the <see cref="ItemInstance"/> for the currently selected slot and also returns the slot state.
         /// </summary>
         public bool TryGetSelectedItemInstance(out InventorySlotState slotState, out ItemInstance instance)
@@ -633,112 +620,24 @@ namespace RoachRace.Networking.Inventory
             return true;
         }
 
-        /// <summary>
-        /// Requests using the currently selected item without aim data.<br/>
-        /// <br/>
-        /// Typical behavior:<br/>
-        /// - If running on the server, uses selected item immediately.<br/>
-        /// - Otherwise, only the local owner can request use via RPC.<br/>
-        /// <br/>
-        /// Notes:<br/>
-        /// - If the selected slot is empty, the server-side use will no-op and return <c>false</c>.<br/>
-        /// </summary>
-        /// <returns>
-        /// <c>true</c> request was accepted/queued (or applied immediately on server).<br/>
-        /// <c>false</c> caller is not permitted (non-owner client), or the server-side use failed.<br/>
-        /// </returns>
+        // Invoked on client side first
         public bool TryUseSelected()
         {
             if (!IsOwner) return false;
-            TryBeginPredictedSelectedUse();
-            UseSelectedServerRpc();
+            UseSelected(); // needed so that client can show visually usage of item
+            if(!IsServerInitialized) UseSelectedServerRpc(); // needed so that server plays usage animation and apply item use logic (e.g. ammo decrement, cooldown start, etc) and notify other clients about it
             return true;
         }
 
-        /// <summary>
-        /// Requests using the currently selected item.<br/>
-        /// <br/>
-        /// Typical behavior:<br/>
-        /// - If the selected item implements <see cref="IRoachRaceAimItem"/>, aim data is read from <see cref="lookState"/> and applied before use.<br/>
-        /// - If running on the server, use happens immediately.<br/>
-        /// - Otherwise, only the local owner can request use via RPC.<br/>
-        /// </summary>
-        /// <returns>
-        /// <c>true</c> request was accepted/queued (or applied immediately on server).<br/>
-        /// <c>false</c> caller is not permitted (non-owner client), or the server-side use failed.<br/>
-        /// </returns>
-        /// <summary>
-        /// Requests stopping use of the currently selected item.<br/>
-        /// <br/>
-        /// Typical behavior:<br/>
-        /// - If running on the server, stops immediately.<br/>
-        /// - Otherwise, only the local owner can request stop via RPC.<br/>
-        /// <br/>
-        /// Notes:<br/>
-        /// - This is intended for hold-to-use items (e.g., automatic weapons) which need a stop signal on button release.<br/>
-        /// - If the selected slot is invalid/empty or the item component is missing, this will no-op and return <c>false</c>.<br/>
-        /// </summary>
+        // Invoked on client side first
         public bool TryStopUseSelected()
         {
-            if (IsServerInitialized)
-                return ServerStopUseSelected();
-
             if (!IsOwner) return false;
-            TryEndPredictedSelectedUse();
-            StopUseSelectedServerRpc();
+            ServerStopUseSelected(); // needed so that server can stop usage of the item
+            if(!IsServerInitialized) StopUseSelectedServerRpc(); // needed so that clients are notified about the stop usage
             return true;
         }
 
-        private void TryBeginPredictedSelectedUse()
-        {
-            if (!IsClientInitialized || !IsOwner)
-                return;
-
-            if (!TryGetSelectedItem(out var item) || item == null)
-                return;
-
-            if (item is IRoachRaceAimItem aimItem && TryGetLookAim(preferLocal: true, out var aimOrigin, out var aimDirection))
-                aimItem.SetAim(aimOrigin, aimDirection);
-
-            if (item is ILocalPredictedUseItem predictedItem)
-                predictedItem.BeginPredictedUse();
-        }
-
-        private void TryEndPredictedSelectedUse()
-        {
-            if (!IsClientInitialized || !IsOwner)
-                return;
-
-            if (!TryGetSelectedItem(out var item) || item == null)
-                return;
-
-            EndPredictedUseLocally(item);
-        }
-
-        /// <summary>
-        /// Stops owner-only predicted use for a specific item without contacting the server.<br/>
-        /// </summary>
-        /// <param name="item">The item whose predicted use should end.</param>
-        private static void EndPredictedUseLocally(IRoachRaceItem item)
-        {
-            if (item is ILocalPredictedUseItem predictedItem)
-                predictedItem.EndPredictedUse();
-        }
-
-        /// <summary>
-        /// Requests using the first available stack/slot matching <paramref name="itemId"/> without aim data.<br/>
-        /// <br/>
-        /// Typical behavior:<br/>
-        /// - If running on the server, uses immediately.<br/>
-        /// - Otherwise, only the local owner can request use via RPC.<br/>
-        /// <br/>
-        /// Notes:<br/>
-        /// - The server performs validation via <see cref="CanUseByItemId"/> and will return <c>false</c> if unusable.<br/>
-        /// </summary>
-        /// <returns>
-        /// <c>true</c> request was accepted/queued (or applied immediately on server).<br/>
-        /// <c>false</c> invalid <paramref name="itemId"/> (0), caller is not permitted (non-owner client), or the server-side use failed.<br/>
-        /// </returns>
         public bool TryUseByItemId(ushort itemId)
         {
             if (itemId == 0) return false;
@@ -835,7 +734,7 @@ namespace RoachRace.Networking.Inventory
         [ServerRpc(RequireOwnership = true)]
         private void UseSelectedServerRpc()
         {
-            ServerUseSelected();
+            UseSelected();
         }
 
         /// <summary>
@@ -847,7 +746,6 @@ namespace RoachRace.Networking.Inventory
             ServerStopUseSelected();
         }
 
-        [Server]
         private bool ServerStopUseSelected()
         {
             int idx = _selectedSlotIndex.Value;
@@ -891,7 +789,7 @@ namespace RoachRace.Networking.Inventory
 
         /// <summary>
         /// Server-authoritative use by item definition id.<br/>
-        /// Currently the code that reports use failures is somewhat duplicated between this and <see cref="ServerUseSelected"/>;
+        /// Currently the code that reports use failures is somewhat duplicated between this and <see cref="UseSelected"/>;
         /// Could be unified if desired since they share a lot of validation steps, but for now it's separate for clarity and 
         /// because they may diverge in the future (e.g., if we want to allow using by id from non-selected slots). I am
         /// considering to move this to items code. Maybe we will move all item related code to networking package<br/>
@@ -957,16 +855,8 @@ namespace RoachRace.Networking.Inventory
             }
 
             // Some items rely on client-derived aim data (e.g., raycast from camera).
-            // Apply aim BEFORE gating so gate implementations can validate the aimed target.
             if (!TryApplyAimFromLookState(item, preferLocal: false, slotIndex, itemId))
                 return false;
-
-            // Optional server-side gating hook.
-            if (item is IServerItemUseGate gate && !gate.CanStartUse(this, slotIndex, out var gateReason))
-            {
-                ReportUseFailed(itemId, slotIndex, gateReason != ItemUseFailReason.None ? gateReason : ItemUseFailReason.ServerRejected);
-                return false;
-            }
 
             int seed = UnityEngine.Random.Range(0, int.MaxValue);
             item.InitializeUseContext(seed, OwnerId, true, gameObject);
@@ -1311,12 +1201,12 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
-    /// Server-only: returns the total units available for a given <paramref name="itemId"/> across all stacks.<br/>
-    /// Useful for weapon logic checks (can we fully reload?) before consuming.<br/>
+        /// Server-only: returns the total units available for a given <paramref name="itemId"/> across all stacks.<br/>
+        /// Useful for weapon logic checks (can we fully reload?) before consuming.<br/>
         /// </summary>
-    /// <returns>
-    /// Total count across all slots (0 if <paramref name="itemId"/> is 0 or not present).<br/>
-    /// </returns>
+        /// <returns>
+        /// Total count across all slots (0 if <paramref name="itemId"/> is 0 or not present).<br/>
+        /// </returns>
         [Server]
         public int GetTotalCountByItemId(ushort itemId)
         {
@@ -1335,15 +1225,15 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
-    /// Server-authoritative slot selection implementation.<br/>
-    ///<br/>
-    /// Typical behavior:<br/>
-    /// - Updates <see cref="_selectedSlotIndex"/> (replicated).<br/>
-    /// - Updates selection visuals locally and via observers RPC.<br/>
-    /// - When <paramref name="useOnSelect"/> is true, may auto-use the selected item depending on team/item rules.<br/>
-    ///<br/>
-    /// Expected context:<br/>
-    /// - Server only.<br/>
+        /// Server-authoritative slot selection implementation.<br/>
+        ///<br/>
+        /// Typical behavior:<br/>
+        /// - Updates <see cref="_selectedSlotIndex"/> (replicated).<br/>
+        /// - Updates selection visuals locally and via observers RPC.<br/>
+        /// - When <paramref name="useOnSelect"/> is true, may auto-use the selected item depending on team/item rules.<br/>
+        ///<br/>
+        /// Expected context:<br/>
+        /// - Server only.<br/>
         /// </summary>
         [Server]
         private void ServerSelectSlot(int slotIndex, bool useOnSelect)
@@ -1362,21 +1252,9 @@ namespace RoachRace.Networking.Inventory
             if (slot.IsEmpty) return;
         }
 
-        /// <summary>
-    /// Server-authoritative "use selected" implementation.<br/>
-    ///<br/>
-    /// Typical behavior:<br/>
-    /// - Uses the currently selected slot's item component.<br/>
-    /// - Optionally sets aim data (when provided) for items implementing <see cref="IRoachRaceAimItem"/>.<br/>
-    /// - Optionally consumes inventory stack count based on item definition.<br/>
-    /// - Plays use on other observing clients via an Observers RPC (with or without aim).<br/>
-        /// </summary>
-    /// <returns>
-    /// <c>true</c> use executed.<br/>
-    /// <c>false</c> selected slot invalid/empty, missing registry/component, or otherwise not usable.<br/>
-    /// </returns>
-        [Server]
-        private bool ServerUseSelected()
+
+        // Should be invocked on both client and server. On the server, it will run the full logic. On the client, it will run validation logic and VFX related code paths, but skip actual item use and inventory mutation.
+        private bool UseSelected()
         {
             int idx = _selectedSlotIndex.Value;
             if (idx < 0 || idx >= Slots.Count)
@@ -1404,16 +1282,8 @@ namespace RoachRace.Networking.Inventory
             }
 
             // Some items rely on client-derived aim data (e.g., raycast from camera).
-            // Apply aim BEFORE gating so gate implementations can validate the aimed target.
             if (!TryApplyAimFromLookState(item, preferLocal: false, idx, slot.ItemId))
                 return false;
-
-            // Optional server-side gating hook.
-            if (item is IServerItemUseGate gate && !gate.CanStartUse(this, idx, out var gateReason))
-            {
-                ReportUseFailed(slot.ItemId, idx, gateReason != ItemUseFailReason.None ? gateReason : ItemUseFailReason.ServerRejected);
-                return false;
-            }
 
             int seed = UnityEngine.Random.Range(0, int.MaxValue);
             item.InitializeUseContext(seed, OwnerId, true, gameObject);
@@ -1424,18 +1294,20 @@ namespace RoachRace.Networking.Inventory
                 return false;
 
             item.UseStart();
+            
+            if(IsServerInitialized) {
+                // Consume one stack entry only when the definition says so.
+                if (TryGetDefinition(slot.ItemId, out var def) && def != null && def.ConsumesInventoryOnUse)
+                {
+                    TryRemoveOneFromSelected();
 
-            // Consume one stack entry only when the definition says so.
-            if (TryGetDefinition(slot.ItemId, out var def) && def != null && def.ConsumesInventoryOnUse)
-            {
-                TryRemoveOneFromSelected();
+                    // Slot contents may have changed; update visuals for currently selected slot.
+                    ApplySelectionVisuals(idx);
+                    SetSelectionVisualsObserversRpc(idx);
+                }
 
-                // Slot contents may have changed; update visuals for currently selected slot.
-                ApplySelectionVisuals(idx);
-                SetSelectionVisualsObserversRpc(idx);
+                UseItemObserversRpc(slot.ItemId, seed);
             }
-
-            UseItemObserversRpc(slot.ItemId, seed);
 
             // If the item is consumable, it can call back into inventory removal itself later.
             // For now, keycard/heal items already manage their own charges; inventory count represents possession.
@@ -1514,24 +1386,19 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
-    /// Server-to-observers RPC that plays item use on observing clients without aim data.<br/>
-    ///<br/>
-    /// Typical behavior:<br/>
-    /// - Re-initializes use context for deterministic playback and calls <c>UseStart()</c>.<br/>
-    /// - Skips the owning client when the item already supports local prediction, because that client has already
-    ///   started the use locally via <see cref="TryBeginPredictedSelectedUse"/>.<br/>
-    ///<br/>
-    /// Expected context:<br/>
-    /// - Runs on clients which are observing this NetworkObject (server excluded).<br/>
+        /// Server-to-observers RPC that plays item use on observing clients without aim data.<br/>
+        ///<br/>
+        /// Typical behavior:<br/>
+        /// - Re-initializes use context for deterministic playback and calls <c>UseStart()</c>.<br/>
+        ///<br/>
+        /// Expected context:<br/>
+        /// - Runs on clients which are observing this NetworkObject (server excluded).<br/>
         /// </summary>
         [ObserversRpc(ExcludeServer = true)]
         private void UseItemObserversRpc(ushort itemId, int seed)
         {
             if (itemRegistry == null) return;
             if (!itemRegistry.TryGetItem(itemId, out var item)) return;
-
-            if (IsOwner && item is ILocalPredictedUseItem)
-                return;
 
             item.InitializeUseContext(seed, OwnerId, false, gameObject);
             if (item is IRoachRaceAimItem)
