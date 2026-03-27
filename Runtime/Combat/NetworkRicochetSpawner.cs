@@ -78,7 +78,7 @@ namespace RoachRace.Networking.Combat
                     ? Quaternion.LookRotation(forwardOnSurface.normalized, hit.normal)
                     : Quaternion.FromToRotation(Vector3.up, hit.normal);
 
-                Instantiate(spawnPrefab, spawnPosition, spawnRotation);
+                Destroy(Instantiate(spawnPrefab, spawnPosition, spawnRotation), traceDestroyAfterSeconds);
                 incomingDirection = Vector3.Reflect(incomingDirection, hit.normal).normalized;
             }
         }
