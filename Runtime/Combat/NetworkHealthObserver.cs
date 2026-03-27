@@ -1,34 +1,26 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using FishNet.Object;
-using RoachRace.Data;
 using RoachRace.Interaction;
-using RoachRace.Networking.Extensions;
 using RoachRace.Networking.Inventory;
 using UnityEngine;
 
 namespace RoachRace.Networking.Combat
 {
-    /// <summary>
-    /// Bridges inventory “health-asset” deltas into <see cref="NetworkHealth"/> combat semantics on the server.<br/>
-    ///<br/>
-    /// Typical usage:<br/>
-    /// - Attach this to the same player GameObject that has <see cref="NetworkPlayerInventory"/> and <see cref="NetworkHealth"/>.<br/>
-    /// - Assign <see cref="healthAsset"/> to the ItemDefinition that represents health units.<br/>
-    /// - Any server-authoritative inventory deltas for that item id will be translated into damage/heal calls on <see cref="NetworkHealth"/> (preserving death flow and attribution for damage via <see cref="DamageInfo"/>).<br/>
-    ///<br/>
-    /// Design intent:<br/>
-    /// - Status effects (and other gameplay systems) operate on inventory transactions, not bespoke health-meter code.<br/>
-    /// - This component localizes the “health is special” mapping to one place, rather than spreading it across effect implementations.
-    /// </summary>
     public sealed class NetworkHealthObserver : NetworkBehaviour, INetworkPlayerInventoryDeltaObserver
     {
         [Header("Health Asset")]
         [SerializeField]
         [Tooltip("ItemDefinition id used as the key for health units in inventory.")]
         private ItemDefinition healthAsset;
-
+        [Header("Death/Despawn Settings")]
+        [Tooltip("NetworkObject to despawn on death. If null, will attempt to find a NetworkObject in parent hierarchy.")]
+        public NetworkObject objectToDespawn;
+        [Tooltip("Optional NetworkObject to spawn on death (e.g., explosion effect).")]
+        public NetworkObject objectToSpawn;
         NetworkPlayerInventory inventory;
-        NetworkHealth networkHealth;
+        readonly HashSet<INetworkHealthServerDeathObserver> serverDeathObservers = new();
 
         public override void OnStartServer()
         {
@@ -38,16 +30,6 @@ namespace RoachRace.Networking.Combat
             {
                 Debug.LogError($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': inventory.", gameObject);
                 throw new InvalidOperationException($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': inventory.");
-            }
-
-            if (!TryGetComponent(out networkHealth))
-            {
-                networkHealth = GetComponentInChildren<NetworkHealth>();
-                if (networkHealth == null)
-                {
-                    Debug.LogError($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': networkHealth.", gameObject);
-                    throw new InvalidOperationException($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': networkHealth.");
-                }
             }
 
             if (healthAsset == null)
@@ -67,41 +49,55 @@ namespace RoachRace.Networking.Combat
             base.OnStopServer();
         }
 
-        public void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, ushort itemId, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId)
+        public void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId)
         {
             if (healthAsset == null)
-                return;
-
-            if (itemId != healthAsset.id)
                 return;
 
             if (appliedDelta == 0)
                 return;
 
-            if (appliedDelta > 0)
+            if (inventory.GetTotalCountByItemId(healthAsset.id) <= 0)
             {
-                networkHealth.Heal(appliedDelta);
-                return;
+                foreach (var observer in serverDeathObservers)
+                {
+                    observer.OnNetworkHealthServerDied();
+                }
+                StartHandleDeath();
             }
+        }
 
-            var damageAmount = -appliedDelta;
+        [Server]
+        void StartHandleDeath()
+        {
+            bool waitForOwnershipTransfer = objectToDespawn.OwnerId != -1;
+            objectToDespawn.RemoveOwnership();
+            if (objectToSpawn) Spawn(Instantiate(objectToSpawn, transform.position, transform.rotation));
+            if (waitForOwnershipTransfer) StartCoroutine(HandleDeathCoroutine());
+            else objectToDespawn.Despawn();
+        }
 
-            DamageSource source = new DamageSource
+        IEnumerator HandleDeathCoroutine()
+        {
+            // Wait for ownership to clear to avoid despawn issues on some transports.
+            const float timeoutSeconds = 2f;
+            float elapsed = 0f;
+            while (objectToDespawn != null && objectToDespawn.OwnerId != -1 && elapsed < timeoutSeconds)
             {
-                AttackerName = string.Empty,
-                AttackerAvatarUrl = string.Empty,
-                SourcePosition = transform.position,
-                WeaponIconKey = weaponIconKey
-            };
+                elapsed += Time.deltaTime;
+                yield return null;
+            }
+            objectToDespawn.Despawn();
+        }
 
-            DamageInfo damageInfo = NetworkExtensions.CreateDamageInfo(
-                instigatorConnectionId,
-                damageAmount,
-                transform.position,
-                Vector3.up,
-                source);
+        internal void AddServerDeathObserver(NetworkPlayerControllerLifecycle networkPlayerControllerLifecycle)
+        {
+            serverDeathObservers.Add(networkPlayerControllerLifecycle);
+        }
 
-            networkHealth.TryConsume(damageInfo);
+        internal void RemoveServerDeathObserver(NetworkPlayerControllerLifecycle networkPlayerControllerLifecycle)
+        {
+            serverDeathObservers.Remove(networkPlayerControllerLifecycle);
         }
     }
 }

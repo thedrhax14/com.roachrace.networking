@@ -18,8 +18,8 @@ namespace RoachRace.Networking.Combat
         /// <param name="selfMultiplier">Additional multiplier for self damage</param>
         /// <param name="otherMultiplier">Additional multiplier for other damage</param>
         /// <returns>Tuple of (selfDamage, otherDamage) as integers</returns>
-        public static (int selfDamage, int otherDamage) CalculateDamageDistribution(
-            float baseDamage,
+        public static (int selfDamage, int otherDamage) CalculateStacksDistribution(
+            int baseStackAmount,
             float selfMass,
             float otherMass,
             float selfMultiplier = 1f,
@@ -31,10 +31,10 @@ namespace RoachRace.Networking.Combat
             float selfRatio = otherMass / totalMass;  // Inverted: use OTHER mass for SELF damage
             float otherRatio = selfMass / totalMass;  // Inverted: use SELF mass for OTHER damage
 
-            int selfDamage = Mathf.RoundToInt(baseDamage * selfRatio * selfMultiplier);
-            int otherDamage = Mathf.RoundToInt(baseDamage * otherRatio * otherMultiplier);
+            int selfStacksAmount = Mathf.RoundToInt(baseStackAmount * selfRatio * selfMultiplier);
+            int otherStacksAmount = Mathf.RoundToInt(baseStackAmount * otherRatio * otherMultiplier);
 
-            return (selfDamage, otherDamage);
+            return (selfStacksAmount, otherStacksAmount);
         }
 
         /// <summary>

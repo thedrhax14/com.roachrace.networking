@@ -4,69 +4,78 @@ using RoachRace.Networking.Combat;
 
 namespace RoachRace.Networking.Editor.Combat
 {
-    [CustomEditor(typeof(PhysicsCollisionCrushDamage))]
-    public class PhysicsCollisionCrushDamageEditor : UnityEditor.Editor
+    /// <summary>
+    /// Custom inspector for <see cref="PhysicsCollisionCrushStatusEffect"/> that previews the mass-based stack split.<br>
+    /// Use this in the Unity Editor to tune the impact threshold, effect entry, and multipliers.
+    /// </summary>
+    [CustomEditor(typeof(PhysicsCollisionCrushStatusEffect))]
+    public class PhysicsCollisionCrushStatusEffectEditor : UnityEditor.Editor
     {
         private float previewCrushImpulse = 4f;
         private Rigidbody otherRigidbody;
         
+        private SerializedProperty statusEffect;
         private SerializedProperty minCrushImpulsePerSecond;
-        private SerializedProperty crushDamagePerImpulse;
-        private SerializedProperty selfDamageMultiplier;
-        private SerializedProperty outgoingDamageMultiplier;
+        private SerializedProperty selfStackMultiplier;
+        private SerializedProperty outgoingStackMultiplier;
 
+        /// <summary>
+        /// Caches serialized properties used by the custom inspector.
+        /// </summary>
         private void OnEnable()
         {
+            statusEffect = serializedObject.FindProperty("statusEffect");
             minCrushImpulsePerSecond = serializedObject.FindProperty("minCrushImpulsePerSecond");
-            crushDamagePerImpulse = serializedObject.FindProperty("crushDamagePerImpulse");
-            selfDamageMultiplier = serializedObject.FindProperty("selfDamageMultiplier");
-            outgoingDamageMultiplier = serializedObject.FindProperty("outgoingDamageMultiplier");
+            selfStackMultiplier = serializedObject.FindProperty("selfStackMultiplier");
+            outgoingStackMultiplier = serializedObject.FindProperty("outgoingStackMultiplier");
         }
 
+        /// <summary>
+        /// Returns the rigidbody mass for the inspected object, or 1 if it is unexpectedly missing.
+        /// </summary>
+        /// <returns>The object's rigidbody mass used for preview calculations.</returns>
         private float GetSelfMass()
         {
-            var component = (PhysicsCollisionCrushDamage)target;
-            var rb = component.GetComponent<Rigidbody>();
-            return rb != null ? rb.mass : 1f;
+            var component = (PhysicsCollisionCrushStatusEffect)target;
+            return component.TryGetComponent<Rigidbody>(out var rb) && rb != null ? rb.mass : 1f;
         }
 
+        /// <summary>
+        /// Returns the preview mass for the other object, or a large value when no test rigidbody is assigned.
+        /// </summary>
+        /// <returns>The other object's rigidbody mass used for preview calculations.</returns>
         private float GetOtherMass()
         {
             return otherRigidbody != null ? otherRigidbody.mass : 100000f;
         }
 
+        /// <summary>
+        /// Draws the inspector UI and the mass-based status effect preview.
+        /// </summary>
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
 
-            // Draw default properties
+            EditorGUILayout.PropertyField(statusEffect);
             EditorGUILayout.PropertyField(minCrushImpulsePerSecond);
-            EditorGUILayout.PropertyField(crushDamagePerImpulse);
-            EditorGUILayout.Space();
-            
-            EditorGUILayout.PropertyField(selfDamageMultiplier);
-            EditorGUILayout.PropertyField(outgoingDamageMultiplier);
+            EditorGUILayout.PropertyField(selfStackMultiplier);
+            EditorGUILayout.PropertyField(outgoingStackMultiplier);
             
             serializedObject.ApplyModifiedProperties();
 
-            // Damage Preview Section
             EditorGUILayout.Space(10);
-            EditorGUILayout.LabelField("Crush Damage Preview", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Crush Status Effect Preview", EditorStyles.boldLabel);
             
-            DrawDamageSeparator();
+            DrawSeparator();
             
-            DrawCrushDamagePreview();
-            
-            EditorGUILayout.Space(5);
-            DrawDamageSeparator();
-            
-            DrawCrushExamples();
+            DrawStatusEffectPreview();
         }
 
-        private void DrawCrushDamagePreview()
+        /// <summary>
+        /// Draws the live preview using the configured threshold, effect stacks, and mass ratios.
+        /// </summary>
+        private void DrawStatusEffectPreview()
         {
-            EditorGUILayout.LabelField("Damage Calculator (per second)", EditorStyles.miniBoldLabel);
-            
             EditorGUI.indentLevel++;
             
             previewCrushImpulse = EditorGUILayout.FloatField("Impulse/Second", previewCrushImpulse);
@@ -88,94 +97,47 @@ namespace RoachRace.Networking.Editor.Combat
             
             if (previewCrushImpulse < minCrushImpulsePerSecond.floatValue)
             {
-                EditorGUILayout.HelpBox($"No crush damage - below threshold ({minCrushImpulsePerSecond.floatValue})", MessageType.Info);
+                EditorGUILayout.HelpBox($"No status effect - below threshold ({minCrushImpulsePerSecond.floatValue})", MessageType.Info);
             }
             else
             {
-                float damagePerSecond = previewCrushImpulse * crushDamagePerImpulse.floatValue;
+                SerializedProperty effectProperty = statusEffect.FindPropertyRelative("effect");
+                SerializedProperty stacksProperty = statusEffect.FindPropertyRelative("stacks");
+                if (effectProperty != null && effectProperty.objectReferenceValue == null)
+                {
+                    EditorGUILayout.HelpBox("Assign a status effect to preview stack distribution.", MessageType.Warning);
+                    EditorGUI.indentLevel--;
+                    return;
+                }
+
+                int configuredStacks = stacksProperty != null ? Mathf.Max(1, stacksProperty.intValue) : 1;
                 
-                var (selfDPS, otherDPS) = PhysicsCollisionDamageCalculator.CalculateDamageDistribution(
-                    damagePerSecond,
+                var (selfStacks, otherStacks) = PhysicsCollisionDamageCalculator.CalculateStacksDistribution(
+                    configuredStacks,
                     selfMass,
                     otherMass,
-                    selfDamageMultiplier.floatValue,
-                    outgoingDamageMultiplier.floatValue
+                    selfStackMultiplier.floatValue,
+                    outgoingStackMultiplier.floatValue
                 );
                 
                 EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField("Self DPS:", GUILayout.Width(120));
-                EditorGUILayout.LabelField($"{selfDPS} HP/s", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField("Self Stacks:", GUILayout.Width(120));
+                EditorGUILayout.LabelField($"{selfStacks}", EditorStyles.boldLabel);
                 EditorGUILayout.EndHorizontal();
                 
                 EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField("Other DPS:", GUILayout.Width(120));
-                EditorGUILayout.LabelField($"{otherDPS} HP/s", EditorStyles.boldLabel);
-                EditorGUILayout.EndHorizontal();
-                
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField("Time to Kill (100 HP):", GUILayout.Width(120));
-                if (selfDPS > 0)
-                {
-                    float timeToKill = 100f / selfDPS;
-                    EditorGUILayout.LabelField($"{timeToKill:F1}s", EditorStyles.miniLabel);
-                }
-                else
-                {
-                    EditorGUILayout.LabelField("N/A", EditorStyles.miniLabel);
-                }
+                EditorGUILayout.LabelField("Other Stacks:", GUILayout.Width(120));
+                EditorGUILayout.LabelField($"{otherStacks}", EditorStyles.boldLabel);
                 EditorGUILayout.EndHorizontal();
             }
             
             EditorGUI.indentLevel--;
         }
 
-        private void DrawCrushExamples()
-        {
-            EditorGUILayout.LabelField("Common Crush Scenarios", EditorStyles.miniBoldLabel);
-            
-            EditorGUI.indentLevel++;
-            
-            DrawExampleRow("Light pressure (2 imp/s)", 2f);
-            DrawExampleRow("Moderate crush (5 imp/s)", 5f);
-            DrawExampleRow("Heavy press (10 imp/s)", 10f);
-            DrawExampleRow("Hydraulic crusher (20 imp/s)", 20f);
-            DrawExampleRow("Instant death (50 imp/s)", 50f);
-            
-            EditorGUI.indentLevel--;
-        }
-
-        private void DrawExampleRow(string label, float impulsePerSecond)
-        {
-            EditorGUILayout.BeginHorizontal();
-            
-            EditorGUILayout.LabelField(label, GUILayout.Width(200));
-            
-            if (impulsePerSecond < minCrushImpulsePerSecond.floatValue)
-            {
-                EditorGUILayout.LabelField("No damage", EditorStyles.miniLabel);
-            }
-            else
-            {
-                float selfMass = GetSelfMass();
-                float otherMass = GetOtherMass();
-                
-                float damagePerSecond = impulsePerSecond * crushDamagePerImpulse.floatValue;
-                
-                var (selfDPS, otherDPS) = PhysicsCollisionDamageCalculator.CalculateDamageDistribution(
-                    damagePerSecond,
-                    selfMass,
-                    otherMass,
-                    selfDamageMultiplier.floatValue,
-                    outgoingDamageMultiplier.floatValue
-                );
-                
-                EditorGUILayout.LabelField($"Self: {selfDPS} HP/s | Other: {otherDPS} HP/s", EditorStyles.miniLabel);
-            }
-            
-            EditorGUILayout.EndHorizontal();
-        }
-
-        private void DrawDamageSeparator()
+        /// <summary>
+        /// Draws a simple horizontal separator between inspector sections.
+        /// </summary>
+        private void DrawSeparator()
         {
             EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
         }

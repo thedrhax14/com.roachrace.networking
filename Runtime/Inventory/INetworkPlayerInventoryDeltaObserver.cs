@@ -10,15 +10,14 @@ namespace RoachRace.Networking.Inventory
     public interface INetworkPlayerInventoryDeltaObserver
     {
         /// <summary>
-        /// Called on the server after the inventory has applied a delta for <paramref name="itemId"/>.<br/>
+        /// Called on the server after the inventory has applied a delta for typically one observed item.<br/>
         /// Delta sign convention: negative = consumed, positive = added.
         /// </summary>
         /// <param name="inventory">The inventory which applied the delta.</param>
-        /// <param name="itemId">The ItemDefinition id.</param>
         /// <param name="appliedDelta">The delta actually applied (may be smaller magnitude than requested).</param>
         /// <param name="weaponIconKey">Optional UI-facing weapon key to attribute the delta (eg killfeed icon key). Empty when not applicable.</param>
         /// <param name="instigatorConnectionId">ClientId of the instigator connection (real user), or -1 for environment/unknown.</param>
         /// <param name="instigatorObjectId">NetworkObjectId of the instigator object (combat attribution), or -1 for environment/unknown.</param>
-        void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, ushort itemId, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId);
+        void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId);
     }
 }

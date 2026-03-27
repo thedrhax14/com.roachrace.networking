@@ -1266,7 +1266,7 @@ namespace RoachRace.Networking.Inventory
 
             int consumed = amount - remaining;
             if (consumed != 0)
-                NotifyServerDeltaObservers(itemId, -consumed, weaponIconKey, instigatorConnectionId, instigatorObjectId);
+                NotifyServerDeltaObservers(-consumed, weaponIconKey, instigatorConnectionId, instigatorObjectId);
 
             return consumed;
         }
@@ -1298,12 +1298,12 @@ namespace RoachRace.Networking.Inventory
 
             int added = AddItemUpTo(itemId, delta);
             if (added != 0)
-                NotifyServerDeltaObservers(itemId, added, weaponIconKey, instigatorConnectionId, instigatorObjectId);
+                NotifyServerDeltaObservers(added, weaponIconKey, instigatorConnectionId, instigatorObjectId);
             return added;
         }
 
         [Server]
-        private void NotifyServerDeltaObservers(ushort itemId, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId)
+        private void NotifyServerDeltaObservers(int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId)
         {
             if (_serverDeltaObservers.Count == 0) return;
 
@@ -1311,7 +1311,7 @@ namespace RoachRace.Networking.Inventory
             foreach (var observer in _serverDeltaObservers.ToArray())
             {
                 if (observer == null) continue;
-                observer.OnServerInventoryItemDeltaApplied(this, itemId, appliedDelta, weaponIconKey, instigatorConnectionId, instigatorObjectId);
+                observer.OnServerInventoryItemDeltaApplied(this, appliedDelta, weaponIconKey, instigatorConnectionId, instigatorObjectId);
             }
         }
 
@@ -1523,6 +1523,8 @@ namespace RoachRace.Networking.Inventory
     ///<br/>
     /// Typical behavior:<br/>
     /// - Re-initializes use context for deterministic playback and calls <c>UseStart()</c>.<br/>
+    /// - Skips the owning client when the item already supports local prediction, because that client has already
+    ///   started the use locally via <see cref="TryBeginPredictedSelectedUse"/>.<br/>
     ///<br/>
     /// Expected context:<br/>
     /// - Runs on clients which are observing this NetworkObject (server excluded).<br/>
@@ -1532,6 +1534,9 @@ namespace RoachRace.Networking.Inventory
         {
             if (itemRegistry == null) return;
             if (!itemRegistry.TryGetItem(itemId, out var item)) return;
+
+            if (IsOwner && item is ILocalPredictedUseItem)
+                return;
 
             item.InitializeUseContext(seed, OwnerId, false, gameObject);
             if (item is IRoachRaceAimItem)

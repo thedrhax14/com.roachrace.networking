@@ -16,6 +16,6 @@ namespace RoachRace.Networking.Combat
         /// </summary>
         /// <param name="health">The health component which began death handling.</param>
         /// <param name="damageInfo">Fatal damage context.</param>
-        void OnNetworkHealthServerDied(NetworkHealth health, DamageInfo damageInfo);
+        void OnNetworkHealthServerDied();
     }
 }

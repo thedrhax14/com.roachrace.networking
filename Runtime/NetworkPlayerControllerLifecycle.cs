@@ -26,7 +26,7 @@ namespace RoachRace.Networking
         private NetworkPlayer _networkPlayer;
         private NetworkPlayerStats _stats;
         private NetworkObject _currentController;
-        private NetworkHealth _currentControllerHealth;
+        private NetworkHealthObserver _currentHealthObserver;
         private bool _respawnInProgress;
 
         /// <summary>
@@ -153,15 +153,15 @@ namespace RoachRace.Networking
             if (_currentController == null)
                 return;
 
-            _currentControllerHealth = _currentController.GetComponentInChildren<NetworkHealth>();
-            if (_currentControllerHealth != null)
+            _currentHealthObserver = _currentController.GetComponentInChildren<NetworkHealthObserver>();
+            if (_currentHealthObserver != null)
             {
-                _currentControllerHealth.AddServerDeathObserver(this);
+                _currentHealthObserver.AddServerDeathObserver(this);
             }
             else
             {
                 Debug.LogError(
-                    $"Spawned controller '{_currentController.name}' has no {nameof(NetworkHealth)}; respawn will not trigger.",
+                    $"Spawned controller '{_currentController.name}' has no {nameof(NetworkHealthObserver)}; respawn will not trigger.",
                     _currentController.gameObject);
             }
         }
@@ -174,16 +174,16 @@ namespace RoachRace.Networking
         [Server]
         private void UnsubscribeFromCurrentHealth()
         {
-            if (_currentControllerHealth != null)
-                _currentControllerHealth.RemoveServerDeathObserver(this);
-            _currentControllerHealth = null;
+            if (_currentHealthObserver != null)
+                _currentHealthObserver.RemoveServerDeathObserver(this);
+            _currentHealthObserver = null;
         }
 
         /// <inheritdoc />
         [Server]
-        public void OnNetworkHealthServerDied(NetworkHealth health, DamageInfo damageInfo)
+        public void OnNetworkHealthServerDied()
         {
-            Debug.Log($"[{nameof(NetworkPlayerControllerLifecycle)}] Observed death of controller '{health.gameObject.name}' for player '{gameObject.name}'", gameObject);
+            Debug.Log($"[{nameof(NetworkPlayerControllerLifecycle)}] Observed death of controller '{_currentHealthObserver.gameObject.name}' for player '{gameObject.name}'", gameObject);
             if (_respawnInProgress)
                 return;
 
