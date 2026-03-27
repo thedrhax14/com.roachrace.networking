@@ -21,12 +21,13 @@ namespace RoachRace.Networking.Combat
         public NetworkObject objectToSpawn;
         NetworkPlayerInventory inventory;
         readonly HashSet<INetworkHealthServerDeathObserver> serverDeathObservers = new();
+        public int currentHealth;
 
         public override void OnStartServer()
         {
             base.OnStartServer();
-
-            if (!TryGetComponent(out inventory))
+            inventory = GetComponentInParent<NetworkPlayerInventory>();
+            if (inventory == null)
             {
                 Debug.LogError($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': inventory.", gameObject);
                 throw new InvalidOperationException($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': inventory.");
@@ -56,8 +57,8 @@ namespace RoachRace.Networking.Combat
 
             if (appliedDelta == 0)
                 return;
-
-            if (inventory.GetTotalCountByItemId(healthAsset.id) <= 0)
+            currentHealth = inventory.GetTotalCountByItemId(healthAsset.id);
+            if (currentHealth <= 0)
             {
                 foreach (var observer in serverDeathObservers)
                 {
