@@ -2,6 +2,7 @@
     "name": "RoachRace.Networking",
     "rootNamespace": "RoachRace.Networking",
     "references": [
+        "RoachRace.Impact",
         "GUID:af26f5b98d6e94d13ab8e127aef70dbb",
         "GUID:1ef91177351374300b98ae13223c1218",
         "GUID:a774d51f612904007aff26cd5d0eb855",

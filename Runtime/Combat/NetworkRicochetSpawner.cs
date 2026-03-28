@@ -64,7 +64,7 @@ namespace RoachRace.Networking.Combat
 
             Vector3[] tracePoints = BuildTracePoints(hits, origin);
             if (!AreValidTracePoints(tracePoints)) return;
-            SpawnBulletVisual(tracePoints);
+                SpawnBulletVisual(tracePoints, hits);
 #endif
         }
 
@@ -74,7 +74,8 @@ namespace RoachRace.Networking.Combat
         /// The prefab must include <see cref="RicochetBulletVisual"/>.
         /// </summary>
         /// <param name="tracePoints">Polyline points the bullet should follow. Must contain at least 2 points.</param>
-        private void SpawnBulletVisual(Vector3[] tracePoints)
+        /// <param name="hits">Raycast hits corresponding to the trace points. Expected count is <c>tracePoints.Length - 1</c>.</param>
+        private void SpawnBulletVisual(Vector3[] tracePoints, List<RaycastHit> hits)
         {
             if (bulletPrefab == null)
                 return;
@@ -86,7 +87,15 @@ namespace RoachRace.Networking.Combat
             Vector3 firstSegment = tracePoints[1] - tracePoints[0];
             if (firstSegment.sqrMagnitude > 0.0001f)
                 startRotation = Quaternion.LookRotation(firstSegment.normalized, Vector3.up);
-            Instantiate(bulletPrefab, tracePoints[0], startRotation).Play(tracePoints);
+
+            RaycastHit[] hitArray = System.Array.Empty<RaycastHit>();
+            if (hits != null && hits.Count > 0)
+            {
+                hitArray = new RaycastHit[hits.Count];
+                hits.CopyTo(hitArray, 0);
+            }
+
+            Instantiate(bulletPrefab, tracePoints[0], startRotation).Play(tracePoints, hitArray);
         }
 
         private void SpawnLocalHitPrefabs(List<RaycastHit> hits, Vector3 initialDirection)

@@ -1,3 +1,4 @@
+using RoachRace.Impact;
 using UnityEngine;
 
 namespace RoachRace.Networking.Combat
@@ -16,11 +17,14 @@ namespace RoachRace.Networking.Combat
         [SerializeField] private float destroyAfterLightSeconds = 1f;
 
         private Vector3[] path;
+        private RaycastHit[] raycastHits;
         private int segmentIndex;
         private float traveledDistance;
         private float segmentLength;
         private float selfDestructTimer = -1f;
         private bool hasReachedEnd;
+        private int nextImpactIndex;
+        private bool hasLoggedMissingImpactManager;
 
         /// <summary>
         /// Starts following the given trace path.
@@ -32,6 +36,7 @@ namespace RoachRace.Networking.Combat
                 return;
 
             this.path = path;
+            raycastHits = null;
             transform.position = path[0];
             SetInitialRotation(path);
             ConfigurePhysicsForVisualOnly();
@@ -40,6 +45,21 @@ namespace RoachRace.Networking.Combat
             segmentLength = GetSegmentLength(path, segmentIndex);
             selfDestructTimer = -1f;
             hasReachedEnd = false;
+            nextImpactIndex = 0;
+            hasLoggedMissingImpactManager = false;
+        }
+
+        /// <summary>
+        /// Starts following the given trace path and resolves local impact effects when the visual reaches each hit.<br>
+        /// Intended usage is for <see cref="NetworkRicochetSpawner"/> to pass the same hits that were used to build the path,
+        /// so the bullet visual can call <see cref="ImpactManager.HandleImpact(RaycastHit)"/> at the correct moment.
+        /// </summary>
+        /// <param name="path">World-space polyline to follow. Must contain at least two points.</param>
+        /// <param name="raycastHits">Raycast hits corresponding to the path waypoints. Expected length is <c>path.Length - 1</c>.</param>
+        public void Play(Vector3[] path, RaycastHit[] raycastHits)
+        {
+            Play(path);
+            this.raycastHits = raycastHits;
         }
 
         /// <summary>
@@ -65,8 +85,11 @@ namespace RoachRace.Networking.Combat
         private void OnDisable()
         {
             path = null;
+            raycastHits = null;
             selfDestructTimer = -1f;
             hasReachedEnd = false;
+            nextImpactIndex = 0;
+            hasLoggedMissingImpactManager = false;
         }
 
         /// <summary>
@@ -103,8 +126,9 @@ namespace RoachRace.Networking.Combat
             float travelSpeed = defaultTravelSpeed;
             traveledDistance += travelSpeed * Time.deltaTime;
 
-            while (segmentIndex < path.Length - 1 && traveledDistance > segmentLength)
+            while (segmentIndex < path.Length - 1 && traveledDistance >= segmentLength)
             {
+                ResolveImpactAtCurrentWaypoint();
                 traveledDistance -= segmentLength;
                 segmentIndex++;
                 if (segmentIndex >= path.Length - 1)
@@ -132,6 +156,36 @@ namespace RoachRace.Networking.Combat
                 transform.rotation = Quaternion.LookRotation(moveDirection.normalized, Vector3.up);
 
             transform.position = newPosition;
+        }
+
+        /// <summary>
+        /// Resolves a local impact for the next expected hit when the visual reaches a waypoint.
+        /// </summary>
+        private void ResolveImpactAtCurrentWaypoint()
+        {
+            if (raycastHits == null || raycastHits.Length == 0)
+                return;
+
+            if (nextImpactIndex < 0 || nextImpactIndex >= raycastHits.Length)
+                return;
+
+            ImpactManager manager = ImpactManager.Instance;
+            if (manager == null)
+            {
+                if (!hasLoggedMissingImpactManager)
+                {
+                    Debug.LogWarning(
+                        $"[{nameof(RicochetBulletVisual)}] No active {nameof(ImpactManager)} instance in scene while resolving ricochet impacts on '{gameObject.name}'.",
+                        gameObject);
+                    hasLoggedMissingImpactManager = true;
+                }
+
+                nextImpactIndex++;
+                return;
+            }
+
+            manager.HandleImpact(raycastHits[nextImpactIndex]);
+            nextImpactIndex++;
         }
 
         /// <summary>
