@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using Unity.Cinemachine;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using KINEMATION.ProceduralRecoilAnimationSystem.Runtime;
 
 namespace RoachRace.Networking
 {
@@ -22,6 +23,7 @@ namespace RoachRace.Networking
         [SerializeField] private CharacterCamera _characterCamera;
         [SerializeField] private CinemachineCamera virtualCamera;
         [SerializeField] private ProceduralAnimationFPSData proceduralAnimationFPSData;
+        [SerializeField] private RecoilAnimation recoilAnimation;
 
         [Header("Input")]
         [SerializeField] private InputActionReference moveAction;
@@ -40,6 +42,8 @@ namespace RoachRace.Networking
         private int _jumpBufferTicksRemaining;
         private int _coyoteTicksMax;
         private int _jumpBufferTicksMax;
+        private Vector2 lookInput;
+        private bool updateLookInput;
         private Vector3 _lookRotation;
         private readonly SyncVar<Vector3> _syncLookInput = new (Vector3.zero);
         private Quaternion _aimRotation = Quaternion.identity;
@@ -143,6 +147,8 @@ namespace RoachRace.Networking
 
             lookAction.action.performed -= LookAction_Performed;
             lookAction.action.performed += LookAction_Performed;
+            lookAction.action.canceled -= LookAction_Canceled;
+            lookAction.action.canceled += LookAction_Canceled;
             lookAction.action.Enable();
 
             if (virtualCamera != null)
@@ -162,23 +168,14 @@ namespace RoachRace.Networking
 
         private void LookAction_Performed(InputAction.CallbackContext ctx)
         {
-            if (!IsOwner || _characterCamera == null)
-                return;
+            if (!IsOwner) return;
+            updateLookInput = true;
+        }
 
-            Vector2 input = ctx.ReadValue<Vector2>();
-            _lookRotation.x += input.x * Time.deltaTime * lookSensitivity;
-            _lookRotation.y = Mathf.Clamp(_lookRotation.y - input.y * Time.deltaTime * lookSensitivity, -90f, 90f);
-            _lookRotation.z = KMath.FloatInterp(_lookRotation.z, 0, 8f, Time.deltaTime);
-            
-            _aimRotation = Quaternion.Euler(0f, _lookRotation.x, 0f);
-            _syncedAimRotation = Quaternion.Euler(_lookRotation.y, _lookRotation.x, 0f);
-            _aimRotation.Normalize();
-            
-            _characterCamera.pitchInput = _lookRotation.y;
-            _characterCamera.yawInput = _aimRotation.eulerAngles.y;
-            proceduralAnimationFPSData.lookInput = _lookRotation;
-            proceduralAnimationFPSData.deltaLookInput = input;
-            SetSyncLookInputRPC(_lookRotation);
+        private void LookAction_Canceled(InputAction.CallbackContext ctx)
+        {
+            if (!IsOwner) return;
+            updateLookInput = true;
         }
 
         [ServerRpc]
@@ -199,6 +196,33 @@ namespace RoachRace.Networking
         private bool IsGrounded()
         {
             return _groundColliderIds.Count > 0;
+        }
+
+        void Update()
+        {
+            if (!IsClientInitialized || !IsOwner) return;
+
+            lookInput = lookAction.action.ReadValue<Vector2>();
+            recoilAnimation.UpdateDeltaInput(lookInput);
+            lookInput += recoilAnimation.GetRecoilDelta();
+
+            _lookRotation.x += lookInput.x * Time.deltaTime * lookSensitivity;
+            _lookRotation.y = Mathf.Clamp(_lookRotation.y - lookInput.y * Time.deltaTime * lookSensitivity, -90f, 90f);
+            _lookRotation.z = KMath.FloatInterp(_lookRotation.z, 0, 8f, Time.deltaTime);
+
+            _aimRotation = Quaternion.Euler(0f, _lookRotation.x, 0f);
+            _syncedAimRotation = Quaternion.Euler(_lookRotation.y, _lookRotation.x, 0f);
+            _aimRotation.Normalize();
+
+            _characterCamera.pitchInput = _lookRotation.y;
+            _characterCamera.yawInput = _aimRotation.eulerAngles.y;
+            proceduralAnimationFPSData.lookInput = _lookRotation;
+            proceduralAnimationFPSData.deltaLookInput = lookInput;
+
+            if(updateLookInput) {
+                SetSyncLookInputRPC(_lookRotation);
+                updateLookInput = false;
+            }
         }
 
         private void FixedUpdate()

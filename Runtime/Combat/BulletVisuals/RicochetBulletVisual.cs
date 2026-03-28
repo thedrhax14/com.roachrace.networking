@@ -183,8 +183,8 @@ namespace RoachRace.Networking.Combat
                 nextImpactIndex++;
                 return;
             }
-
-            manager.HandleImpact(raycastHits[nextImpactIndex]);
+            if(raycastHits[nextImpactIndex].collider != null)
+                manager.HandleImpact(raycastHits[nextImpactIndex]);
             nextImpactIndex++;
         }
 
