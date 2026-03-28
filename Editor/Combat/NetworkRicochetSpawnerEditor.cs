@@ -18,10 +18,8 @@ namespace RoachRace.Networking.Editor.Combat
         private SerializedProperty _triggerInteraction;
         private SerializedProperty _surfaceSpawnOffset;
 
-        private SerializedProperty _spawnPrefab;
         private SerializedProperty _bulletPrefab;
 
-        private SerializedProperty _traceDestroyAfterSeconds;
         private SerializedProperty _traceStartPoint;
 
         private SerializedProperty _lookState;
@@ -40,10 +38,8 @@ namespace RoachRace.Networking.Editor.Combat
             _triggerInteraction = serializedObject.FindProperty("triggerInteraction");
             _surfaceSpawnOffset = serializedObject.FindProperty("surfaceSpawnOffset");
 
-            _spawnPrefab = serializedObject.FindProperty("spawnPrefab");
             _bulletPrefab = serializedObject.FindProperty("bulletPrefab");
 
-            _traceDestroyAfterSeconds = serializedObject.FindProperty("traceDestroyAfterSeconds");
             _traceStartPoint = serializedObject.FindProperty("traceStartPoint");
 
             _lookState = serializedObject.FindProperty("lookState");
@@ -62,14 +58,11 @@ namespace RoachRace.Networking.Editor.Combat
 
             EditorGUILayout.Space(6f);
             EditorGUILayout.LabelField("Spawn", EditorStyles.boldLabel);
-            EditorGUILayout.PropertyField(_spawnPrefab);
             EditorGUILayout.PropertyField(_bulletPrefab);
-            DrawSpawnValidation();
             DrawBulletValidation();
 
             EditorGUILayout.Space(6f);
             EditorGUILayout.LabelField("Trace Visualization", EditorStyles.boldLabel);
-            EditorGUILayout.PropertyField(_traceDestroyAfterSeconds);
             EditorGUILayout.PropertyField(_traceStartPoint);
 
             EditorGUILayout.Space(6f);
@@ -88,32 +81,6 @@ namespace RoachRace.Networking.Editor.Combat
                 MessageType.Info);
 
             serializedObject.ApplyModifiedProperties();
-        }
-
-        /// <summary>
-        /// Shows a simple validation message for the optional local impact prefab.
-        /// </summary>
-        private void DrawSpawnValidation()
-        {
-            Object prefabObject = _spawnPrefab.objectReferenceValue;
-            if (prefabObject == null)
-            {
-                EditorGUILayout.HelpBox(
-                    "Spawn Prefab is optional. Assign it if you want local hit-visual spawning.",
-                    MessageType.Info);
-                return;
-            }
-
-            GameObject prefabGameObject = prefabObject as GameObject;
-            if (prefabGameObject == null)
-            {
-                EditorGUILayout.HelpBox(
-                    "Spawn Prefab must be a GameObject prefab.",
-                    MessageType.Error);
-                return;
-            }
-
-            EditorGUILayout.HelpBox("Spawn setup looks valid.", MessageType.Info);
         }
 
         /// <summary>
