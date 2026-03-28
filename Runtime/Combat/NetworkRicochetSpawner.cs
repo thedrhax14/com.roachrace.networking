@@ -23,11 +23,9 @@ namespace RoachRace.Networking.Combat
         [SerializeField] private float surfaceSpawnOffset = 0.02f;
 
         [Header("Spawn")]
-        [SerializeField] private GameObject spawnPrefab;
         [SerializeField] private RicochetBulletVisual bulletPrefab;
 
         [Header("Trace Visualization")]
-        [SerializeField] private float traceDestroyAfterSeconds = 0.5f;
         [SerializeField] private Transform traceStartPoint;
 
         [Header("Dependencies")]
@@ -59,8 +57,6 @@ namespace RoachRace.Networking.Combat
             List<Vector3> rayOrigins = new(ricochetCount + 1);
             List<RaycastHit> hits = new(ricochetCount + 1);
             BuildRicochetPath(origin, direction, rayOrigins, hits);
-
-            SpawnLocalHitPrefabs(hits, direction);
 
             Vector3[] tracePoints = BuildTracePoints(hits, origin);
             if (!AreValidTracePoints(tracePoints)) return;
@@ -96,27 +92,6 @@ namespace RoachRace.Networking.Combat
             }
 
             Instantiate(bulletPrefab, tracePoints[0], startRotation).Play(tracePoints, hitArray);
-        }
-
-        private void SpawnLocalHitPrefabs(List<RaycastHit> hits, Vector3 initialDirection)
-        {
-            if (spawnPrefab == null || hits == null || hits.Count == 0)
-                return;
-
-            Vector3 incomingDirection = NormalizeDirection(initialDirection);
-            for (int i = 0; i < hits.Count; i++)
-            {
-                RaycastHit hit = hits[i];
-                Vector3 spawnPosition = hit.point + hit.normal * surfaceSpawnOffset;
-
-                Vector3 forwardOnSurface = Vector3.ProjectOnPlane(incomingDirection, hit.normal);
-                Quaternion spawnRotation = forwardOnSurface.sqrMagnitude > 0.0001f
-                    ? Quaternion.LookRotation(forwardOnSurface.normalized, hit.normal)
-                    : Quaternion.FromToRotation(Vector3.up, hit.normal);
-
-                Destroy(Instantiate(spawnPrefab, spawnPosition, spawnRotation), traceDestroyAfterSeconds);
-                incomingDirection = Vector3.Reflect(incomingDirection, hit.normal).normalized;
-            }
         }
 
         private void BuildRicochetPath(Vector3 origin, Vector3 direction, List<Vector3> rayOrigins, List<RaycastHit> hits)
@@ -191,7 +166,6 @@ namespace RoachRace.Networking.Combat
             segmentDistance = Mathf.Max(0.01f, segmentDistance);
             ricochetCount = Mathf.Max(0, ricochetCount);
             surfaceSpawnOffset = Mathf.Max(0f, surfaceSpawnOffset);
-            traceDestroyAfterSeconds = Mathf.Max(0f, traceDestroyAfterSeconds);
         }
 #endif
     }
