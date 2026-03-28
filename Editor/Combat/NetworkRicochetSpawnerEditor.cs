@@ -4,6 +4,11 @@ using UnityEngine;
 
 namespace RoachRace.Networking.Editor.Combat
 {
+    /// <summary>
+    /// Custom inspector for <see cref="NetworkRicochetSpawner"/>.<br>
+    /// Draws the serialized ricochet settings, spawn prefabs, trace visualization options, and scene
+    /// preview tooling used to inspect the ricochet path in the editor.
+    /// </summary>
     [CustomEditor(typeof(NetworkRicochetSpawner))]
     public sealed class NetworkRicochetSpawnerEditor : UnityEditor.Editor
     {
@@ -14,8 +19,8 @@ namespace RoachRace.Networking.Editor.Combat
         private SerializedProperty _surfaceSpawnOffset;
 
         private SerializedProperty _spawnPrefab;
+        private SerializedProperty _bulletPrefab;
 
-        private SerializedProperty _traceLinePrefab;
         private SerializedProperty _traceDestroyAfterSeconds;
         private SerializedProperty _traceStartPoint;
 
@@ -24,6 +29,9 @@ namespace RoachRace.Networking.Editor.Combat
         private float _dashLength = 0.45f;
         private float _gapLength = 0.2f;
 
+        /// <summary>
+        /// Resolves serialized properties once the inspector becomes active.
+        /// </summary>
         private void OnEnable()
         {
             _segmentDistance = serializedObject.FindProperty("segmentDistance");
@@ -33,8 +41,8 @@ namespace RoachRace.Networking.Editor.Combat
             _surfaceSpawnOffset = serializedObject.FindProperty("surfaceSpawnOffset");
 
             _spawnPrefab = serializedObject.FindProperty("spawnPrefab");
+            _bulletPrefab = serializedObject.FindProperty("bulletPrefab");
 
-            _traceLinePrefab = serializedObject.FindProperty("traceLinePrefab");
             _traceDestroyAfterSeconds = serializedObject.FindProperty("traceDestroyAfterSeconds");
             _traceStartPoint = serializedObject.FindProperty("traceStartPoint");
 
@@ -55,11 +63,12 @@ namespace RoachRace.Networking.Editor.Combat
             EditorGUILayout.Space(6f);
             EditorGUILayout.LabelField("Spawn", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(_spawnPrefab);
+            EditorGUILayout.PropertyField(_bulletPrefab);
             DrawSpawnValidation();
+            DrawBulletValidation();
 
             EditorGUILayout.Space(6f);
             EditorGUILayout.LabelField("Trace Visualization", EditorStyles.boldLabel);
-            EditorGUILayout.PropertyField(_traceLinePrefab);
             EditorGUILayout.PropertyField(_traceDestroyAfterSeconds);
             EditorGUILayout.PropertyField(_traceStartPoint);
 
@@ -81,6 +90,9 @@ namespace RoachRace.Networking.Editor.Combat
             serializedObject.ApplyModifiedProperties();
         }
 
+        /// <summary>
+        /// Shows a simple validation message for the optional local impact prefab.
+        /// </summary>
         private void DrawSpawnValidation()
         {
             Object prefabObject = _spawnPrefab.objectReferenceValue;
@@ -104,6 +116,26 @@ namespace RoachRace.Networking.Editor.Combat
             EditorGUILayout.HelpBox("Spawn setup looks valid.", MessageType.Info);
         }
 
+        /// <summary>
+        /// Validates the bullet visual prefab and reminds the user that it must include the follower component.
+        /// </summary>
+        private void DrawBulletValidation()
+        {
+            Object prefabObject = _bulletPrefab.objectReferenceValue;
+            if (prefabObject == null)
+            {
+                EditorGUILayout.HelpBox(
+                    "Bullet Prefab is optional. Assign it if you want a visual bullet to follow the ricochet path.",
+                    MessageType.Info);
+                return;
+            }
+
+            EditorGUILayout.HelpBox("Bullet prefab setup looks valid.", MessageType.Info);
+        }
+
+        /// <summary>
+        /// Draws the ricochet preview and hit markers in the scene view while this object is selected.
+        /// </summary>
         private void OnSceneGUI()
         {
             NetworkRicochetSpawner spawner = (NetworkRicochetSpawner)target;
@@ -161,6 +193,12 @@ namespace RoachRace.Networking.Editor.Combat
             }
         }
 
+        /// <summary>
+        /// Draws a dashed line between two world-space points.
+        /// </summary>
+        /// <param name="start">Line start position in world space.</param>
+        /// <param name="end">Line end position in world space.</param>
+        /// <param name="color">Line color used for the preview.</param>
         private void DrawDashedLine(Vector3 start, Vector3 end, Color color)
         {
             float totalLength = Vector3.Distance(start, end);

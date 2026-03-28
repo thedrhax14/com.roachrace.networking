@@ -9,7 +9,9 @@ namespace RoachRace.Networking.Combat
     /// Intended to be driven by local animation events on every client instance (owner and observers)
     /// so no per-shot network messages are required.
     /// Spawns an optional local prefab at each hit point, aligns spawned object up-vector to hit normal,
-    /// and visualizes ricochet traces using a LineRenderer prefab.
+    /// and visualizes ricochet traces using a LineRenderer prefab.<br>
+    /// The optional bullet visual is delegated to a prefab-attached follower component that consumes the
+    /// generated trace points.
     /// </summary>
     public sealed class NetworkRicochetSpawner : MonoBehaviour
     {
@@ -22,10 +24,10 @@ namespace RoachRace.Networking.Combat
 
         [Header("Spawn")]
         [SerializeField] private GameObject spawnPrefab;
+        [SerializeField] private RicochetBulletVisual bulletPrefab;
 
         [Header("Trace Visualization")]
-        [SerializeField] private LineRenderer traceLinePrefab;
-        [SerializeField] private float traceDestroyAfterSeconds = 1.5f;
+        [SerializeField] private float traceDestroyAfterSeconds = 0.5f;
         [SerializeField] private Transform traceStartPoint;
 
         [Header("Dependencies")]
@@ -36,6 +38,11 @@ namespace RoachRace.Networking.Combat
         public LayerMask HitMask => hitMask;
         public QueryTriggerInteraction TriggerInteraction => triggerInteraction;
 
+        /// <summary>
+        /// Casts the ricochet ray path, spawns local impact prefabs, creates the trace line, and hands
+        /// the computed trace to the bullet visual prefab component.<br>
+        /// Intended for local client-side animation events only.
+        /// </summary>
         public void CastAndSpawn()
         {
 #if UNITY_SERVER && !UNITY_EDITOR
@@ -57,9 +64,29 @@ namespace RoachRace.Networking.Combat
 
             Vector3[] tracePoints = BuildTracePoints(hits, origin);
             if (!AreValidTracePoints(tracePoints)) return;
-
-            SpawnTraceLine(tracePoints);
+            SpawnBulletVisual(tracePoints);
 #endif
+        }
+
+        /// <summary>
+        /// Spawns the configured bullet prefab at the trace start and hands the computed path to its
+        /// visual follower component.<br>
+        /// The prefab must include <see cref="RicochetBulletVisual"/>.
+        /// </summary>
+        /// <param name="tracePoints">Polyline points the bullet should follow. Must contain at least 2 points.</param>
+        private void SpawnBulletVisual(Vector3[] tracePoints)
+        {
+            if (bulletPrefab == null)
+                return;
+
+            if (!AreValidTracePoints(tracePoints))
+                return;
+
+            Quaternion startRotation = Quaternion.identity;
+            Vector3 firstSegment = tracePoints[1] - tracePoints[0];
+            if (firstSegment.sqrMagnitude > 0.0001f)
+                startRotation = Quaternion.LookRotation(firstSegment.normalized, Vector3.up);
+            Instantiate(bulletPrefab, tracePoints[0], startRotation).Play(tracePoints);
         }
 
         private void SpawnLocalHitPrefabs(List<RaycastHit> hits, Vector3 initialDirection)
@@ -102,19 +129,6 @@ namespace RoachRace.Networking.Combat
             }
         }
 
-        private void SpawnTraceLine(Vector3[] tracePoints)
-        {
-            if (!AreValidTracePoints(tracePoints) || traceLinePrefab == null)
-                return;
-
-            LineRenderer lineRenderer = Instantiate(traceLinePrefab);
-            lineRenderer.positionCount = tracePoints.Length;
-            lineRenderer.SetPositions(tracePoints);
-
-            if (traceDestroyAfterSeconds > 0f)
-                Destroy(lineRenderer.gameObject, traceDestroyAfterSeconds);
-        }
-
         private Vector3[] BuildTracePoints(List<RaycastHit> hits, Vector3 origin)
         {
             if (hits == null || hits.Count == 0)
@@ -153,12 +167,6 @@ namespace RoachRace.Networking.Combat
             {
                 Debug.LogError($"[{nameof(NetworkRicochetSpawner)}] lookState is not assigned! Please assign it in the Inspector or place {nameof(NetworkPlayerLookState)} on a parent object.", gameObject);
                 throw new System.NullReferenceException($"[{nameof(NetworkRicochetSpawner)}] lookState is null on GameObject '{gameObject.name}'. This component requires access to {nameof(NetworkPlayerLookState)} for shared aim data.");
-            }
-
-            if (traceLinePrefab == null)
-            {
-                Debug.LogError($"[{nameof(NetworkRicochetSpawner)}] traceLinePrefab is not assigned! Please assign it in the Inspector.", gameObject);
-                throw new System.NullReferenceException($"[{nameof(NetworkRicochetSpawner)}] traceLinePrefab is null on GameObject '{gameObject.name}'. This component requires a LineRenderer prefab to visualize traces.");
             }
 
             if (traceStartPoint == null)
