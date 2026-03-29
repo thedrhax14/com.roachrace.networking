@@ -83,6 +83,9 @@ namespace RoachRace.Networking.Combat
         {
             Rigidbody otherRb = collision.rigidbody;
             float otherMass = otherRb ? otherRb.mass : 1000f;
+            Vector3 hitPoint = collision.contactCount > 0
+                ? collision.GetContact(0).point
+                : (transform.position + collision.transform.position) * 0.5f;
 
             var (selfStacks, otherStacks) = PhysicsCollisionDamageCalculator.CalculateStacksDistribution(
                 statusEffect.stacks,
@@ -94,12 +97,12 @@ namespace RoachRace.Networking.Combat
 
             if (GetComponentInChildren<StatusEffectTickRunner>(true) is StatusEffectTickRunner self)
             {
-                self.AddEffect(statusEffect.effect, selfStacks, GetInstigatorId(collision.gameObject));
+                self.AddEffect(statusEffect.effect, selfStacks, GetInstigatorId(collision.gameObject), hasSourceWorldPosition: true, sourceWorldPosition: collision.gameObject.transform.position, hasTargetWorldPosition: true, targetWorldPosition: hitPoint);
             }
 
             if (collision.gameObject.GetComponentInChildren<StatusEffectTickRunner>(true) is StatusEffectTickRunner other)
             {
-                other.AddEffect(statusEffect.effect, otherStacks, GetInstigatorId(gameObject));
+                other.AddEffect(statusEffect.effect, otherStacks, GetInstigatorId(gameObject), hasSourceWorldPosition: true, sourceWorldPosition: transform.position, hasTargetWorldPosition: true, targetWorldPosition: hitPoint);
             }
         }
 

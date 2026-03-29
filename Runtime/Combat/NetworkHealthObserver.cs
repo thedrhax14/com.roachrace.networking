@@ -77,7 +77,11 @@ namespace RoachRace.Networking.Combat
         /// <param name="weaponIconKey">Optional UI-facing weapon/effect key supplied by the authoritative source.</param>
         /// <param name="instigatorConnectionId">ClientId of the instigator connection, or -1 for environment/unknown.</param>
         /// <param name="instigatorObjectId">NetworkObjectId of the instigator object, or -1 for environment/unknown.</param>
-        public void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId)
+        /// <param name="hasSourceWorldPosition">Whether a world-space source position was supplied for this hit.</param>
+        /// <param name="sourceWorldPosition">World-space source position when <paramref name="hasSourceWorldPosition"/> is true.</param>
+        /// <param name="hasTargetWorldPosition">Whether a world-space target hit point was supplied for this hit.</param>
+        /// <param name="targetWorldPosition">World-space hit point on the damaged target when <paramref name="hasTargetWorldPosition"/> is true.</param>
+        public void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId, bool hasSourceWorldPosition, Vector3 sourceWorldPosition, bool hasTargetWorldPosition, Vector3 targetWorldPosition)
         {
             if (healthAsset == null)
                 return;
@@ -90,7 +94,8 @@ namespace RoachRace.Networking.Combat
             int damageAmount = Mathf.Max(0, previousHealth - currentHealth);
             if (damageAmount > 0)
             {
-                var damageInfo = new NetworkHealthDamageInfo(previousHealth, currentHealth, damageAmount, weaponIconKey, instigatorConnectionId, instigatorObjectId);
+                Vector3 resolvedTargetWorldPosition = hasTargetWorldPosition ? targetWorldPosition : transform.position;
+                var damageInfo = new NetworkHealthDamageInfo(previousHealth, currentHealth, damageAmount, weaponIconKey, instigatorConnectionId, instigatorObjectId, resolvedTargetWorldPosition, hasSourceWorldPosition, sourceWorldPosition);
                 NotifyServerDamageObservers(damageInfo);
             }
 

@@ -140,11 +140,11 @@ namespace RoachRace.Networking.Combat
                         : 1f;
                 }
 
-                ApplyEffects(data.TickRunner, strength01, instigatorOwnerId);
+                ApplyEffects(data.TickRunner, strength01, instigatorOwnerId, data.ClosestPoint);
             }
         }
 
-        private void ApplyEffects(StatusEffectTickRunner tickRunner, float strength01, int instigatorOwnerId)
+        private void ApplyEffects(StatusEffectTickRunner tickRunner, float strength01, int instigatorOwnerId, Vector3 targetHitPoint)
         {
             if (tickRunner == null) return;
 
@@ -160,7 +160,7 @@ namespace RoachRace.Networking.Combat
                     if (removeExistingFirst)
                         tickRunner.RemoveEffects(entry.definition);
 
-                    tickRunner.AddEffect(entry.definition, entryStacks, instigatorConnectionId: instigatorOwnerId);
+                    tickRunner.AddEffect(entry.definition, entryStacks, instigatorConnectionId: instigatorOwnerId, hasSourceWorldPosition: true, sourceWorldPosition: transform.position, hasTargetWorldPosition: true, targetWorldPosition: targetHitPoint);
                 }
 
                 return;
@@ -178,7 +178,7 @@ namespace RoachRace.Networking.Combat
             if (removeExistingFirst)
                 tickRunner.RemoveEffects(_legacyEffect);
 
-            tickRunner.AddEffect(_legacyEffect, stacks, instigatorConnectionId: instigatorOwnerId);
+            tickRunner.AddEffect(_legacyEffect, stacks, instigatorConnectionId: instigatorOwnerId, hasSourceWorldPosition: true, sourceWorldPosition: transform.position, hasTargetWorldPosition: true, targetWorldPosition: targetHitPoint);
         }
 
         private int GetStacksToApply(ExplosionEffect entry, float strength01)

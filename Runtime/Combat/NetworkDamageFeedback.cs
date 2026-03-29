@@ -126,7 +126,9 @@ namespace RoachRace.Networking.Combat
                 damageInfo.DamageAmount,
                 damageInfo.WeaponIconKey,
                 damageInfo.InstigatorConnectionId,
-                damageInfo.InstigatorObjectId);
+                damageInfo.InstigatorObjectId,
+                damageInfo.HasSourceWorldPosition,
+                damageInfo.SourceWorldPosition);
 
             SendDealtDamageToInstigator(damageInfo, targetConnectionId, targetObjectId);
         }
@@ -143,10 +145,12 @@ namespace RoachRace.Networking.Combat
         /// <param name="weaponIconKey">Optional UI-facing weapon/effect key used for attribution.</param>
         /// <param name="instigatorConnectionId">ClientId of the instigator connection, or -1 for environment/unknown.</param>
         /// <param name="instigatorObjectId">NetworkObjectId of the instigator object, or -1 for environment/unknown.</param>
+        /// <param name="hasSourceWorldPosition">Whether a world-space source position was supplied for this hit.</param>
+        /// <param name="sourceWorldPosition">World-space source position when <paramref name="hasSourceWorldPosition"/> is true.</param>
         [TargetRpc]
-        private void DamageTakenTargetRpc(NetworkConnection owner, int previousHealth, int currentHealth, int damageAmount, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId)
+        private void DamageTakenTargetRpc(NetworkConnection owner, int previousHealth, int currentHealth, int damageAmount, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId, bool hasSourceWorldPosition, Vector3 sourceWorldPosition)
         {
-            var damageInfo = new NetworkHealthDamageInfo(previousHealth, currentHealth, damageAmount, weaponIconKey, instigatorConnectionId, instigatorObjectId);
+            var damageInfo = new NetworkHealthDamageInfo(previousHealth, currentHealth, damageAmount, weaponIconKey, instigatorConnectionId, instigatorObjectId, transform.position, hasSourceWorldPosition, sourceWorldPosition);
             NotifyClientDamageObservers(damageInfo);
         }
 
@@ -161,11 +165,12 @@ namespace RoachRace.Networking.Combat
         /// <param name="targetConnectionId">ClientId of the damaged target owner, or -1 when unknown/non-player.</param>
         /// <param name="targetObjectId">NetworkObjectId of the damaged target, or -1 when unknown.</param>
         /// <param name="targetHealthAfterHit">Resolved target health after the hit was applied.</param>
+        /// <param name="targetWorldPosition">World-space position of the damaged target when the hit was applied.</param>
         /// <param name="isFatal">Whether the hit reduced the target to zero or below.</param>
         [TargetRpc]
-        private void DamageDealtTargetRpc(NetworkConnection owner, int damageAmount, string weaponIconKey, int targetConnectionId, int targetObjectId, int targetHealthAfterHit, bool isFatal)
+        private void DamageDealtTargetRpc(NetworkConnection owner, int damageAmount, string weaponIconKey, int targetConnectionId, int targetObjectId, int targetHealthAfterHit, Vector3 targetWorldPosition, bool isFatal)
         {
-            var damageInfo = new DealtDamageInfo(damageAmount, weaponIconKey, targetConnectionId, targetObjectId, targetHealthAfterHit, isFatal);
+            var damageInfo = new DealtDamageInfo(damageAmount, weaponIconKey, targetConnectionId, targetObjectId, targetHealthAfterHit, targetWorldPosition, isFatal);
             NotifyClientDealtDamageObservers(damageInfo);
         }
 
@@ -216,6 +221,7 @@ namespace RoachRace.Networking.Combat
                 targetConnectionId,
                 targetObjectId,
                 damageInfo.CurrentHealth,
+                damageInfo.TargetWorldPosition,
                 damageInfo.IsFatal);
         }
 
@@ -247,10 +253,8 @@ namespace RoachRace.Networking.Combat
         /// <param name="damageInfo">Resolved authoritative dealt-damage information delivered by the server.</param>
         private void NotifyClientDealtDamageObservers(DealtDamageInfo damageInfo)
         {
-            if (clientDealtDamageObservers.Count == 0) {
-                Debug.LogError($"[{nameof(NetworkDamageFeedback)}] Received dealt damage feedback for '{gameObject.name}' but has no registered dealt-damage observers to notify. Damage info: {damageInfo}.", gameObject);
+            if (clientDealtDamageObservers.Count == 0)
                 return;
-            }
 
             foreach (var observer in clientDealtDamageObservers)
             {

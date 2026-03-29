@@ -1053,15 +1053,19 @@ namespace RoachRace.Networking.Inventory
         /// <param name="amount">Units requested to consume ($>0$).</param>
         /// <param name="instigatorConnectionId">ClientId of the instigator connection (real user), or -1 for environment/unknown.</param>
         /// <param name="instigatorObjectId">NetworkObjectId of the instigator object (combat attribution), or -1 for environment/unknown.</param>
+        /// <param name="hasSourceWorldPosition">Whether a world-space damage/effect origin was supplied for this consumption.</param>
+        /// <param name="sourceWorldPosition">World-space origin of the effect or damage source when <paramref name="hasSourceWorldPosition"/> is true.</param>
+        /// <param name="hasTargetWorldPosition">Whether a world-space target hit point was supplied for this consumption.</param>
+        /// <param name="targetWorldPosition">World-space hit point on the damaged target when <paramref name="hasTargetWorldPosition"/> is true.</param>
         /// <returns>The amount actually consumed ($0..amount$).</returns>
         [Server]
-        public int ConsumeByItemId(ushort itemId, int amount, int instigatorConnectionId = -1, int instigatorObjectId = -1)
+        public int ConsumeByItemId(ushort itemId, int amount, int instigatorConnectionId = -1, int instigatorObjectId = -1, bool hasSourceWorldPosition = false, Vector3 sourceWorldPosition = default, bool hasTargetWorldPosition = false, Vector3 targetWorldPosition = default)
         {
-            return ConsumeByItemIdInternal(itemId, amount, weaponIconKey: string.Empty, instigatorConnectionId, instigatorObjectId);
+            return ConsumeByItemIdInternal(itemId, amount, weaponIconKey: string.Empty, instigatorConnectionId, instigatorObjectId, hasSourceWorldPosition, sourceWorldPosition, hasTargetWorldPosition, targetWorldPosition);
         }
 
         [Server]
-        private int ConsumeByItemIdInternal(ushort itemId, int amount, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId)
+        private int ConsumeByItemIdInternal(ushort itemId, int amount, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId, bool hasSourceWorldPosition, Vector3 sourceWorldPosition, bool hasTargetWorldPosition, Vector3 targetWorldPosition)
         {
             if (itemId == 0) return 0;
             if (amount <= 0) return 0;
@@ -1106,7 +1110,7 @@ namespace RoachRace.Networking.Inventory
 
             int consumed = amount - remaining;
             if (consumed != 0)
-                NotifyServerDeltaObservers(-consumed, weaponIconKey, instigatorConnectionId, instigatorObjectId);
+                NotifyServerDeltaObservers(-consumed, weaponIconKey, instigatorConnectionId, instigatorObjectId, hasSourceWorldPosition, sourceWorldPosition, hasTargetWorldPosition, targetWorldPosition);
 
             return consumed;
         }
@@ -1123,27 +1127,31 @@ namespace RoachRace.Networking.Inventory
         /// <param name="weaponIconKey">Optional UI-facing weapon key to attribute the delta (eg killfeed icon key). Empty when not applicable.</param>
         /// <param name="instigatorConnectionId">ClientId of the instigator connection, or -1 for environment/unknown.</param>
         /// <param name="instigatorObjectId">NetworkObjectId of the instigator object, or -1 for environment/unknown.</param>
+        /// <param name="hasSourceWorldPosition">Whether a world-space damage/effect origin was supplied for this delta.</param>
+        /// <param name="sourceWorldPosition">World-space origin of the effect or damage source when <paramref name="hasSourceWorldPosition"/> is true.</param>
+        /// <param name="hasTargetWorldPosition">Whether a world-space target hit point was supplied for this delta.</param>
+        /// <param name="targetWorldPosition">World-space hit point on the damaged target when <paramref name="hasTargetWorldPosition"/> is true.</param>
         /// <returns>The delta actually applied (may be 0 or reduced magnitude).</returns>
         [Server]
-        public int ApplyDeltaByItemId(ushort itemId, int delta, string weaponIconKey, int instigatorConnectionId = -1, int instigatorObjectId = -1)
+        public int ApplyDeltaByItemId(ushort itemId, int delta, string weaponIconKey, int instigatorConnectionId = -1, int instigatorObjectId = -1, bool hasSourceWorldPosition = false, Vector3 sourceWorldPosition = default, bool hasTargetWorldPosition = false, Vector3 targetWorldPosition = default)
         {
             if (itemId == 0) return 0;
             if (delta == 0) return 0;
 
             if (delta < 0)
             {
-                int consumed = ConsumeByItemIdInternal(itemId, -delta, weaponIconKey, instigatorConnectionId, instigatorObjectId);
+                int consumed = ConsumeByItemIdInternal(itemId, -delta, weaponIconKey, instigatorConnectionId, instigatorObjectId, hasSourceWorldPosition, sourceWorldPosition, hasTargetWorldPosition, targetWorldPosition);
                 return -consumed;
             }
 
             int added = AddItemUpTo(itemId, delta);
             if (added != 0)
-                NotifyServerDeltaObservers(added, weaponIconKey, instigatorConnectionId, instigatorObjectId);
+                NotifyServerDeltaObservers(added, weaponIconKey, instigatorConnectionId, instigatorObjectId, hasSourceWorldPosition, sourceWorldPosition, hasTargetWorldPosition, targetWorldPosition);
             return added;
         }
 
         [Server]
-        private void NotifyServerDeltaObservers(int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId)
+        private void NotifyServerDeltaObservers(int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId, bool hasSourceWorldPosition, Vector3 sourceWorldPosition, bool hasTargetWorldPosition, Vector3 targetWorldPosition)
         {
             if (_serverDeltaObservers.Count == 0) return;
 
@@ -1151,7 +1159,7 @@ namespace RoachRace.Networking.Inventory
             foreach (var observer in _serverDeltaObservers.ToArray())
             {
                 if (observer == null) continue;
-                observer.OnServerInventoryItemDeltaApplied(this, appliedDelta, weaponIconKey, instigatorConnectionId, instigatorObjectId);
+                observer.OnServerInventoryItemDeltaApplied(this, appliedDelta, weaponIconKey, instigatorConnectionId, instigatorObjectId, hasSourceWorldPosition, sourceWorldPosition, hasTargetWorldPosition, targetWorldPosition);
             }
         }
 

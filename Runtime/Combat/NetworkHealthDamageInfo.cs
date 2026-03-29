@@ -1,3 +1,5 @@
+using UnityEngine;
+
 namespace RoachRace.Networking.Combat
 {
     /// <summary>
@@ -18,7 +20,10 @@ namespace RoachRace.Networking.Combat
         /// <param name="weaponIconKey">Optional UI-facing weapon/effect key used for attribution. Empty when not applicable.</param>
         /// <param name="instigatorConnectionId">ClientId of the instigator connection, or -1 for environment/unknown.</param>
         /// <param name="instigatorObjectId">NetworkObjectId of the instigator object, or -1 for environment/unknown.</param>
-        public NetworkHealthDamageInfo(int previousHealth, int currentHealth, int damageAmount, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId)
+        /// <param name="targetWorldPosition">World-space position of the damaged target when the hit was applied.</param>
+        /// <param name="hasSourceWorldPosition">Whether a world-space source position was supplied for this hit.</param>
+        /// <param name="sourceWorldPosition">World-space source position when <paramref name="hasSourceWorldPosition"/> is true.</param>
+        public NetworkHealthDamageInfo(int previousHealth, int currentHealth, int damageAmount, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId, Vector3 targetWorldPosition, bool hasSourceWorldPosition, Vector3 sourceWorldPosition)
         {
             PreviousHealth = previousHealth;
             CurrentHealth = currentHealth;
@@ -26,6 +31,9 @@ namespace RoachRace.Networking.Combat
             WeaponIconKey = weaponIconKey;
             InstigatorConnectionId = instigatorConnectionId;
             InstigatorObjectId = instigatorObjectId;
+            TargetWorldPosition = targetWorldPosition;
+            HasSourceWorldPosition = hasSourceWorldPosition;
+            SourceWorldPosition = sourceWorldPosition;
         }
 
         /// <summary>
@@ -63,6 +71,24 @@ namespace RoachRace.Networking.Combat
         /// Typical usage: attribute the hit to a projectile, trap, or actor when extra server-side context is needed.
         /// </summary>
         public int InstigatorObjectId { get; }
+
+        /// <summary>
+        /// World-space position of the damaged target when the hit was applied.<br/>
+        /// Typical usage: anchor attacker-side floating damage text above the damaged target.
+        /// </summary>
+        public Vector3 TargetWorldPosition { get; }
+
+        /// <summary>
+        /// Whether a world-space source position was supplied for this hit.<br/>
+        /// Typical usage: victim-side UI can decide whether it has enough data to draw a directional indicator.
+        /// </summary>
+        public bool HasSourceWorldPosition { get; }
+
+        /// <summary>
+        /// World-space origin of the effect or damage source when available.<br/>
+        /// Typical usage: compute incoming damage direction relative to the local camera.
+        /// </summary>
+        public Vector3 SourceWorldPosition { get; }
 
         /// <summary>
         /// Whether the damage reduced health to zero or below.<br/>

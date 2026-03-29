@@ -45,6 +45,10 @@ namespace RoachRace.Networking.Effects
             public int Stacks;
             public int InstigatorConnectionId;
             public int InstigatorObjectId;
+            public bool HasSourceWorldPosition;
+            public Vector3 SourceWorldPosition;
+            public bool HasTargetWorldPosition;
+            public Vector3 TargetWorldPosition;
 
             public uint StartTick;
             public uint EndTick;
@@ -135,7 +139,11 @@ namespace RoachRace.Networking.Effects
         /// <param name="stacks">Number of stacks to apply</param>
         /// <param name="instigatorConnectionId">ClientId of the instigator connection (real user), or -1 for environment/unknown.</param>
         /// <param name="instigatorObjectId">NetworkObjectId of the instigator object (combat attribution), or -1 for environment/unknown.</param>
-        public int AddEffect(StatusEffectDefinition definition, int stacks = 1, int instigatorConnectionId = -1, int instigatorObjectId = -1)
+        /// <param name="hasSourceWorldPosition">Whether a world-space source position was supplied for this effect.</param>
+        /// <param name="sourceWorldPosition">World-space source position of the effect when <paramref name="hasSourceWorldPosition"/> is true.</param>
+        /// <param name="hasTargetWorldPosition">Whether a world-space target hit point was supplied for this effect.</param>
+        /// <param name="targetWorldPosition">World-space hit point on the damaged target when <paramref name="hasTargetWorldPosition"/> is true.</param>
+        public int AddEffect(StatusEffectDefinition definition, int stacks = 1, int instigatorConnectionId = -1, int instigatorObjectId = -1, bool hasSourceWorldPosition = false, Vector3 sourceWorldPosition = default, bool hasTargetWorldPosition = false, Vector3 targetWorldPosition = default)
         {
             if (definition == null) {
                 Debug.LogError($"[{nameof(StatusEffectTickRunner)}] Cannot add effect because definition is null.", gameObject);
@@ -186,7 +194,7 @@ namespace RoachRace.Networking.Effects
                     // If this is a one-shot, apply the incremental delta immediately.
                     if (intervalTicks == 0u && addedStacks > 0)
                     {
-                        ApplyDelta(definition, definition.DeltaPerTick * addedStacks);
+                        ApplyDelta(definition, definition.DeltaPerTick * addedStacks, existing.InstigatorConnectionId, existing.InstigatorObjectId, existing.HasSourceWorldPosition, existing.SourceWorldPosition, existing.HasTargetWorldPosition, existing.TargetWorldPosition);
                         existing.NextTick = uint.MaxValue;
                     }
 
@@ -212,6 +220,10 @@ namespace RoachRace.Networking.Effects
                 Stacks = stacks,
                 InstigatorConnectionId = instigatorConnectionId,
                 InstigatorObjectId = instigatorObjectId,
+                HasSourceWorldPosition = hasSourceWorldPosition,
+                SourceWorldPosition = sourceWorldPosition,
+                HasTargetWorldPosition = hasTargetWorldPosition,
+                TargetWorldPosition = targetWorldPosition,
                 StartTick = nowTick,
                 EndTick = GetEndTick(definition, nowTick),
                 IntervalTicks = intervalTicks,
@@ -305,10 +317,10 @@ namespace RoachRace.Networking.Effects
             if (def == null) return;
 
             float delta = def.DeltaPerTick * Mathf.Max(1, effect.Stacks);
-            ApplyDelta(def, delta, effect.InstigatorConnectionId, effect.InstigatorObjectId);
+            ApplyDelta(def, delta, effect.InstigatorConnectionId, effect.InstigatorObjectId, effect.HasSourceWorldPosition, effect.SourceWorldPosition, effect.HasTargetWorldPosition, effect.TargetWorldPosition);
         }
 
-        private void ApplyDelta(StatusEffectDefinition def, float delta, int instigatorConnectionId = -1, int instigatorObjectId = -1)
+        private void ApplyDelta(StatusEffectDefinition def, float delta, int instigatorConnectionId = -1, int instigatorObjectId = -1, bool hasSourceWorldPosition = false, Vector3 sourceWorldPosition = default, bool hasTargetWorldPosition = false, Vector3 targetWorldPosition = default)
         {
             if (def == null) return;
             if (Mathf.Abs(delta) <= 0.0001f) return;
@@ -333,7 +345,7 @@ namespace RoachRace.Networking.Effects
                 return;
 
             string weaponIconKey = !string.IsNullOrWhiteSpace(def.EffectId) ? def.EffectId : def.name;
-            inventory.ApplyDeltaByItemId(asset.id, units, weaponIconKey, instigatorConnectionId: instigatorConnectionId, instigatorObjectId: instigatorObjectId);
+            inventory.ApplyDeltaByItemId(asset.id, units, weaponIconKey, instigatorConnectionId: instigatorConnectionId, instigatorObjectId: instigatorObjectId, hasSourceWorldPosition: hasSourceWorldPosition, sourceWorldPosition: sourceWorldPosition, hasTargetWorldPosition: hasTargetWorldPosition, targetWorldPosition: targetWorldPosition);
         }
 
         private void RefreshDuration(ActiveEffect effect, StatusEffectDefinition def, uint nowTick)

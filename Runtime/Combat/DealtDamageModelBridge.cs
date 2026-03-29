@@ -71,6 +71,7 @@ namespace RoachRace.Networking.Combat
                 damageInfo.TargetConnectionId,
                 damageInfo.TargetObjectId,
                 damageInfo.TargetHealthAfterHit,
+                damageInfo.TargetWorldPosition,
                 damageInfo.IsFatal));
         }
 

@@ -104,6 +104,7 @@ namespace RoachRace.Networking.Combat
         {
             public StatusEffectTickRunner TickRunner;
             public float MinNormalizedDistance;
+            public Vector3 ClosestPoint;
         }
 
         private struct RigidbodyData
@@ -183,6 +184,7 @@ namespace RoachRace.Networking.Combat
                         if (normalized < existing.MinNormalizedDistance)
                         {
                             existing.MinNormalizedDistance = normalized;
+                            existing.ClosestPoint = closestPoint;
                             targets[targetRunner] = existing;
                         }
                     }
@@ -191,7 +193,8 @@ namespace RoachRace.Networking.Combat
                         targets[targetRunner] = new TargetData
                         {
                             TickRunner = tickRunner,
-                            MinNormalizedDistance = normalized
+                            MinNormalizedDistance = normalized,
+                            ClosestPoint = closestPoint
                         };
                     }
                 }
@@ -247,7 +250,7 @@ namespace RoachRace.Networking.Combat
                 if (data.TickRunner != null)
                 {
                     if (!data.TickRunner.IsServerInitialized) continue;
-                    ApplyEffects(data.TickRunner, strength01, instigatorOwnerId);
+                    ApplyEffects(data.TickRunner, strength01, instigatorOwnerId, data.ClosestPoint);
                 }
             }
 
@@ -337,7 +340,7 @@ namespace RoachRace.Networking.Combat
             ApplyExplosionForce(rigidbodies);
         }
 
-        private void ApplyEffects(StatusEffectTickRunner tickRunner, float strength01, int instigatorOwnerId)
+        private void ApplyEffects(StatusEffectTickRunner tickRunner, float strength01, int instigatorOwnerId, Vector3 targetHitPoint)
         {
             if (tickRunner == null) return;
 
@@ -353,7 +356,7 @@ namespace RoachRace.Networking.Combat
                     if (removeExistingFirst)
                         tickRunner.RemoveEffects(entry.definition);
 
-                    tickRunner.AddEffect(entry.definition, entryStacks, instigatorConnectionId: instigatorOwnerId);
+                    tickRunner.AddEffect(entry.definition, entryStacks, instigatorConnectionId: instigatorOwnerId, hasSourceWorldPosition: true, sourceWorldPosition: transform.position, hasTargetWorldPosition: true, targetWorldPosition: targetHitPoint);
                 }
 
                 return;
@@ -371,7 +374,7 @@ namespace RoachRace.Networking.Combat
             if (removeExistingFirst)
                 tickRunner.RemoveEffects(_legacyEffect);
 
-            tickRunner.AddEffect(_legacyEffect, stacks, instigatorConnectionId: instigatorOwnerId);
+            tickRunner.AddEffect(_legacyEffect, stacks, instigatorConnectionId: instigatorOwnerId, hasSourceWorldPosition: true, sourceWorldPosition: transform.position, hasTargetWorldPosition: true, targetWorldPosition: targetHitPoint);
         }
 
         private int GetStacksToApply(ExplosionEffect entry, float strength01)

@@ -1,3 +1,5 @@
+using UnityEngine;
+
 namespace RoachRace.Networking.Inventory
 {
     /// <summary>
@@ -18,6 +20,10 @@ namespace RoachRace.Networking.Inventory
         /// <param name="weaponIconKey">Optional UI-facing weapon key to attribute the delta (eg killfeed icon key). Empty when not applicable.</param>
         /// <param name="instigatorConnectionId">ClientId of the instigator connection (real user), or -1 for environment/unknown.</param>
         /// <param name="instigatorObjectId">NetworkObjectId of the instigator object (combat attribution), or -1 for environment/unknown.</param>
-        void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId);
+        /// <param name="hasSourceWorldPosition">Whether a world-space source position was supplied for this delta.</param>
+        /// <param name="sourceWorldPosition">World-space origin of the effect or damage source when <paramref name="hasSourceWorldPosition"/> is true.</param>
+        /// <param name="hasTargetWorldPosition">Whether a world-space target hit point was supplied for this delta.</param>
+        /// <param name="targetWorldPosition">World-space hit point on the damaged target when <paramref name="hasTargetWorldPosition"/> is true.</param>
+        void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId, bool hasSourceWorldPosition, Vector3 sourceWorldPosition, bool hasTargetWorldPosition, Vector3 targetWorldPosition);
     }
 }

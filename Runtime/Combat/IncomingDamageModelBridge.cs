@@ -76,7 +76,9 @@ namespace RoachRace.Networking.Combat
                 damageInfo.DamageAmount,
                 damageInfo.WeaponIconKey,
                 damageInfo.InstigatorConnectionId,
-                damageInfo.InstigatorObjectId));
+                damageInfo.InstigatorObjectId,
+                damageInfo.HasSourceWorldPosition,
+                damageInfo.SourceWorldPosition));
         }
 
         /// <summary>
