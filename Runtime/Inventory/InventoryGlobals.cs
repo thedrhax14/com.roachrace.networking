@@ -22,6 +22,12 @@ namespace RoachRace.Networking.Inventory
         [Tooltip("Optional. Weapon HUD model for ammo counter + weapon icon.")]
         public WeaponHudModel weaponHudModel;
 
+        [Tooltip("Optional. Owner-local incoming damage model used for hit indicators and similar transient UI.")]
+        public IncomingDamageModel incomingDamageModel;
+
+        [Tooltip("Optional. Owner-local dealt-damage model used for hit confirmation and similar transient UI.")]
+        public DealtDamageModel dealtDamageModel;
+
         private static InventoryGlobals _cached;
         private static bool _attemptedLoad;
 
