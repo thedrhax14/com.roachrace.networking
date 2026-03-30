@@ -311,6 +311,11 @@ namespace RoachRace.Networking.Input
             _useWasPressed = pressed;
         }
 
+        /// <summary>
+        /// Maps digit hotkeys to inventory slot indices.<br/>
+        /// Typical usage: digits 1-9 select slots 0-8; digit 0 selects slot 9 (10th slot).
+        /// </summary>
+        /// <param name="ctx">Input system callback context for the digit action.</param>
         private void OnDigitActionPerformed(InputAction.CallbackContext ctx)
         {
             if (logInputEvents)
@@ -329,10 +334,14 @@ namespace RoachRace.Networking.Input
                 return;
             }
 
-            if (digit <= 0)
+            int slotIndex;
+            if (digit == 0)
+                slotIndex = 9;
+            else if (digit > 0)
+                slotIndex = digit - 1;
+            else
                 return;
 
-            int slotIndex = digit - 1;
             _inventory.TrySelectSlot(slotIndex);
         }
     }

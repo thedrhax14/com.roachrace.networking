@@ -5,6 +5,7 @@ using KINEMATION.CharacterAnimationSystem.Scripts.Runtime.Core;
 using RoachRace.Controls;
 using RoachRace.Interaction;
 using RoachRace.Networking.Input;
+using RoachRace.UI.Components.Inventory.PieMenu;
 using RoachRace.UI.Models;
 using UnityEngine;
 using System.Collections.Generic;
@@ -38,8 +39,8 @@ namespace RoachRace.Networking.Inventory
     public sealed class NetworkPlayerInventory : NetworkBehaviour, IPlayerInventory
     {
         [Header("Config")]
-        [Tooltip("Number of inventory slots supported for this character. Survivors typically use 8, ghosts 6, monsters can use 8 (4 left + 4 right UI).")]
-        [SerializeField, Range(1, 9)] private int slotCount = 9;
+        [Tooltip("Number of inventory slots supported for this character. Configure to match the HUD (e.g., pie menu uses 10 slots: indices 0-9).")]
+        [SerializeField, Range(1, 10)] private int slotCount = 10;
 
         [Header("Initial Items")]
         [Tooltip("Optional. Items granted by the server when this player spawns. Use this for reusable default loadouts. Note: item child objects are hidden unless their itemId exists in inventory slots and that slot is selected.")]
@@ -73,6 +74,7 @@ namespace RoachRace.Networking.Inventory
         private bool _characterAnimationInitialized = false;
         private bool _ownerFeedbackSubscribed;
         private bool _ownerSlotsSubscribed;
+        private bool _pendingPieMenuBind;
 
         private readonly HashSet<INetworkPlayerInventoryDeltaObserver> _serverDeltaObservers = new();
 
@@ -369,6 +371,12 @@ namespace RoachRace.Networking.Inventory
         {
             // SyncList initial state replication can fire OnChange once per element. Coalesce into one UI push per frame.
             if (!IsOwner) return;
+
+            if (_pendingPieMenuBind)
+            {
+                TryRefreshPieMenuBinding();
+            }
+
             if (!_uiModelDirty) return;
 
             _uiModelDirty = false;
@@ -390,6 +398,7 @@ namespace RoachRace.Networking.Inventory
             _selectedSlotIndex.OnChange -= OnSelectedSlotChanged;
 
             _inventoryReady.OnChange -= OnInventoryReadyChanged;
+            TryClearPieMenuBinding();
             RemoveOwnerClientSubscriptions();
         }
 
@@ -404,6 +413,8 @@ namespace RoachRace.Networking.Inventory
         {
             RemoveOwnerClientSubscriptions();
 
+            TryRefreshPieMenuBinding();
+
             if (!IsOwner)
                 return;
 
@@ -417,6 +428,54 @@ namespace RoachRace.Networking.Inventory
             }
 
             _uiModelDirty = true;
+        }
+
+        /// <summary>
+        /// Attempts to bind (or unbind) the local-owner inventory to the global HUD pie menu view.<br/>
+        /// Typical usage: called during <see cref="OnStartClient"/> and <see cref="OnOwnershipClient"/> so the HUD can forward slot-selection commands to the current owner.<br/>
+        /// </summary>
+        private void TryRefreshPieMenuBinding()
+        {
+            var pieMenuView = FindFirstObjectByType<InventoryPieMenuView>();
+            if (pieMenuView == null)
+            {
+                _pendingPieMenuBind = IsOwner;
+
+                if (IsOwner)
+                {
+                    Debug.LogWarning($"[{nameof(NetworkPlayerInventory)}] Could not find {nameof(InventoryPieMenuView)} to bind on '{gameObject.name}'. Will retry while owner.", gameObject);
+                }
+
+                return;
+            }
+
+            _pendingPieMenuBind = false;
+
+            if (IsOwner)
+            {
+                pieMenuView.SetInventoryTarget(this);
+            }
+            else
+            {
+                pieMenuView.ClearInventoryTarget(this);
+            }
+        }
+
+        /// <summary>
+        /// Clears the pie menu binding if this inventory is currently bound.<br/>
+        /// Typical usage: called when the client object stops so the HUD does not retain a stale command target.
+        /// </summary>
+        private void TryClearPieMenuBinding()
+        {
+            _pendingPieMenuBind = false;
+
+            var pieMenuView = FindFirstObjectByType<InventoryPieMenuView>();
+            if (pieMenuView == null)
+            {
+                return;
+            }
+
+            pieMenuView.ClearInventoryTarget(this);
         }
 
         /// <summary>
