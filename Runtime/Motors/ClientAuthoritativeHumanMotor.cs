@@ -4,6 +4,7 @@ using FishNet.Object.Synchronizing;
 using KINEMATION.CharacterAnimationSystem.Scripts.Runtime.Camera;
 using KINEMATION.Shared.KAnimationCore.Runtime.Core;
 using System.Collections.Generic;
+using RoachRace.Networking.Inventory;
 using Unity.Cinemachine;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -29,14 +30,17 @@ namespace RoachRace.Networking
         [SerializeField] private InputActionReference moveAction;
         [SerializeField] private InputActionReference jumpAction;
         [SerializeField] private InputActionReference lookAction;
+        [SerializeField] private InputActionReference aimAction;
         [SerializeField] private float lookSensitivity = 15f;
 
         private Rigidbody rb;
         private CapsuleCollider capsuleCollider;
+        private NetworkPlayerInventory inventory;
 
         private float _dt;
         private float _bodyYaw;
         private bool _jumpQueued;
+        private bool _isAiming;
 
         private int _coyoteTicksRemaining;
         private int _jumpBufferTicksRemaining;
@@ -70,6 +74,12 @@ namespace RoachRace.Networking
 
             if (jumpAction == null || jumpAction.action == null)
                 throw new System.NullReferenceException($"[{nameof(ClientAuthoritativeHumanMotor)}] jumpAction is null on '{gameObject.name}'.");
+
+            if (aimAction == null || aimAction.action == null)
+                throw new System.NullReferenceException($"[{nameof(ClientAuthoritativeHumanMotor)}] aimAction is null on '{gameObject.name}'.");
+
+            if (!TryGetComponent(out inventory) || inventory == null)
+                throw new System.NullReferenceException($"[{nameof(ClientAuthoritativeHumanMotor)}] NetworkPlayerInventory is null on '{gameObject.name}'.");
 
             if (!TryGetComponent(out survivorRemoteAnimator) || survivorRemoteAnimator == null)
                 throw new System.NullReferenceException($"[{nameof(ClientAuthoritativeHumanMotor)}] SurvivorRemoteAnimator is null on '{gameObject.name}'.");
@@ -145,11 +155,19 @@ namespace RoachRace.Networking
             jumpAction.action.performed += JumpAction_Performed;
             jumpAction.action.Enable();
 
-            lookAction.action.performed -= LookAction_Performed;
-            lookAction.action.performed += LookAction_Performed;
-            lookAction.action.canceled -= LookAction_Canceled;
-            lookAction.action.canceled += LookAction_Canceled;
-            lookAction.action.Enable();
+            if(lookAction != null) {
+                lookAction.action.performed -= LookAction_Performed;
+                lookAction.action.performed += LookAction_Performed;
+                lookAction.action.canceled -= LookAction_Canceled;
+                lookAction.action.canceled += LookAction_Canceled;
+                lookAction.action.Enable();
+            }
+
+            aimAction.action.started -= AimAction_Began;
+            aimAction.action.started += AimAction_Began;
+            aimAction.action.canceled -= AimAction_Ended;
+            aimAction.action.canceled += AimAction_Ended;
+            aimAction.action.Enable();
 
             if (virtualCamera != null)
             {
@@ -178,6 +196,72 @@ namespace RoachRace.Networking
             updateLookInput = true;
         }
 
+        /// <summary>
+        /// Marks the local owner as aiming and mirrors that state into the camera, procedural animation data, and active weapon item.<br/>
+        /// Typical usage: called from owner-only input callbacks so local ADS behavior stays in sync with animation and recoil systems.<br/>
+        /// Context: this method intentionally does not replicate aim to remote clients because aim is a local-only effect in this setup.<br/>
+        /// </summary>
+        /// <param name="isAiming">True when aim is engaged, false when aim is released.</param>
+        private void SetAimState(bool isAiming)
+        {
+            _isAiming = isAiming;
+
+            if (proceduralAnimationFPSData != null)
+                proceduralAnimationFPSData.isAiming = isAiming;
+
+            if (_characterCamera != null)
+                _characterCamera.isAiming = isAiming;
+
+            WeaponProp weapon = GetActiveWeaponProp();
+            if (weapon != null)
+                weapon.OnAim(isAiming);
+        }
+
+        /// <summary>
+        /// Handles the start of the local aim input for the owning client.<br/>
+        /// Typical usage: bound to the Input System <c>started</c> callback for hold-to-aim behavior.<br/>
+        /// Context: ignored for non-owners so remote players do not drive local presentation state.<br/>
+        /// </summary>
+        /// <param name="ctx">Input callback context provided by the Input System.</param>
+        private void AimAction_Began(InputAction.CallbackContext ctx)
+        {
+            if (!IsOwner)
+                return;
+
+            SetAimState(true);
+        }
+
+        /// <summary>
+        /// Handles the end of the local aim input for the owning client.<br/>
+        /// Typical usage: bound to the Input System <c>canceled</c> callback for hold-to-aim behavior.<br/>
+        /// Context: ignored for non-owners so remote players do not drive local presentation state.<br/>
+        /// </summary>
+        /// <param name="ctx">Input callback context provided by the Input System.</param>
+        private void AimAction_Ended(InputAction.CallbackContext ctx)
+        {
+            if (!IsOwner)
+                return;
+
+            SetAimState(false);
+        }
+
+        /// <summary>
+        /// Resolves the currently selected weapon prop from the local inventory.<br/>
+        /// Typical usage: called by local presentation code that needs to forward aim state to the equipped weapon.<br/>
+        /// Context: returns null when no selectable item is present or the active item does not host a WeaponProp component.<br/>
+        /// </summary>
+        /// <returns>The active weapon prop when available; otherwise null.</returns>
+        private WeaponProp GetActiveWeaponProp()
+        {
+            if (inventory == null)
+                return null;
+
+            if (!inventory.TryGetSelectedItemInstance(out _, out var itemInstance) || itemInstance == null)
+                return null;
+
+            return itemInstance.ItemComponent != null ? itemInstance.ItemComponent.GetComponent<WeaponProp>() : null;
+        }
+
         [ServerRpc]
         private void SetSyncLookInputRPC(Vector3 value)
         {
@@ -202,7 +286,7 @@ namespace RoachRace.Networking
         {
             if (!IsClientInitialized || !IsOwner) return;
 
-            lookInput = lookAction.action.ReadValue<Vector2>();
+            lookInput = lookAction == null ? Vector2.zero : lookAction.action.ReadValue<Vector2>();
             recoilAnimation.UpdateDeltaInput(lookInput);
             lookInput += recoilAnimation.GetRecoilDelta();
 
@@ -305,8 +389,15 @@ namespace RoachRace.Networking
                 jumpAction.action.performed -= JumpAction_Performed;
                 jumpAction.action.Disable();
 
-                lookAction.action.performed -= LookAction_Performed;
-                lookAction.action.Disable();
+                if(lookAction != null) {
+                    lookAction.action.performed -= LookAction_Performed;
+                    lookAction.action.canceled -= LookAction_Canceled;
+                    lookAction.action.Disable();
+                }
+
+                aimAction.action.started -= AimAction_Began;
+                aimAction.action.canceled -= AimAction_Ended;
+                aimAction.action.Disable();
             }
             if(_characterCamera != null)
                 Destroy(_characterCamera.gameObject);
