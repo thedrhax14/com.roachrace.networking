@@ -17,6 +17,7 @@ namespace RoachRace.Networking
             public Vector2 Move;
             public float Yaw;
             public bool Jump;
+            public bool Run;
         }
 
         [Header("Math")]
@@ -30,6 +31,14 @@ namespace RoachRace.Networking
         [Header("Input")]
         [SerializeField] private InputActionReference moveAction;
         [SerializeField] private InputActionReference jumpAction;
+        [SerializeField] private InputActionReference runAction;
+
+        [Header("Running")]
+        [Tooltip("Speed (blend units per second) used to ramp from walk to run while Shift is held.")]
+        [SerializeField, Min(0f)] private float runBlendIncreasePerSecond = 3f;
+
+        [Tooltip("Speed (blend units per second) used to return from run to walk after Shift is released. Higher = faster drop.")]
+        [SerializeField, Min(0f)] private float runBlendDecreasePerSecond = 9f;
 
         private Rigidbody rb;
         private CapsuleCollider capsuleCollider;
@@ -37,6 +46,9 @@ namespace RoachRace.Networking
         private float _dt;
         private float _bodyYaw;
         private bool _jumpQueued;
+
+        private bool _runHeld;
+        private float _runBlend;
 
         private InputData _latestInput;
 
@@ -64,6 +76,9 @@ namespace RoachRace.Networking
 
             if (jumpAction == null || jumpAction.action == null)
                 throw new System.NullReferenceException($"[{nameof(ServerAuthoritativeHumanMotor)}] jumpAction is null on '{gameObject.name}'.");
+
+            if (runAction == null || runAction.action == null)
+                throw new System.NullReferenceException($"[{nameof(ServerAuthoritativeHumanMotor)}] runAction is null on '{gameObject.name}'.");
 
             if (!TryGetComponent(out survivorRemoteAnimator) || survivorRemoteAnimator == null)
                 throw new System.NullReferenceException($"[{nameof(ServerAuthoritativeHumanMotor)}] SurvivorRemoteAnimator is null on '{gameObject.name}'.");
@@ -120,6 +135,12 @@ namespace RoachRace.Networking
             jumpAction.action.performed += JumpAction_Performed;
             jumpAction.action.Enable();
 
+            runAction.action.started -= RunAction_Began;
+            runAction.action.started += RunAction_Began;
+            runAction.action.canceled -= RunAction_Ended;
+            runAction.action.canceled += RunAction_Ended;
+            runAction.action.Enable();
+
             if (virtualCamera != null)
             {
                 virtualCamera.transform.parent = null;
@@ -135,6 +156,34 @@ namespace RoachRace.Networking
             _jumpQueued = true;
         }
 
+        /// <summary>
+        /// Handles the start of the local run input for the owning client.<br/>
+        /// Typical usage: bound to the Input System <c>started</c> callback for hold-to-run behavior (e.g., Shift).<br/>
+        /// Context: only affects input that is sent to the server; server is authoritative for physics.
+        /// </summary>
+        /// <param name="ctx">Input callback context provided by the Input System.</param>
+        private void RunAction_Began(InputAction.CallbackContext ctx)
+        {
+            if (!IsOwner)
+                return;
+
+            _runHeld = true;
+        }
+
+        /// <summary>
+        /// Handles the end of the local run input for the owning client.<br/>
+        /// Typical usage: bound to the Input System <c>canceled</c> callback for hold-to-run behavior (e.g., Shift).<br/>
+        /// Context: only affects input that is sent to the server; server is authoritative for physics.
+        /// </summary>
+        /// <param name="ctx">Input callback context provided by the Input System.</param>
+        private void RunAction_Ended(InputAction.CallbackContext ctx)
+        {
+            if (!IsOwner)
+                return;
+
+            _runHeld = false;
+        }
+
         private void FixedUpdate()
         {
             _dt = Time.fixedDeltaTime;
@@ -147,8 +196,10 @@ namespace RoachRace.Networking
                 bool jump = _jumpQueued;
                 _jumpQueued = false;
 
+                bool run = _runHeld;
+
                 // Send input to server each tick.
-                SendInputServerRpc(move, _bodyYaw, jump);
+                SendInputServerRpc(move, _bodyYaw, jump, run);
 
                 survivorRemoteAnimator.SetPitchAndYaw(view.Pitch, view.Yaw);
             }
@@ -163,13 +214,14 @@ namespace RoachRace.Networking
         }
 
         [ServerRpc(RequireOwnership = true)]
-        private void SendInputServerRpc(Vector2 move, float yaw, bool jump)
+        private void SendInputServerRpc(Vector2 move, float yaw, bool jump, bool run)
         {
             _latestInput = new InputData
             {
                 Move = move,
                 Yaw = yaw,
-                Jump = jump
+                Jump = jump,
+                Run = run
             };
         }
 
@@ -181,6 +233,10 @@ namespace RoachRace.Networking
         private void SimulateOnServer(InputData input)
         {
             rb.MoveRotation(Quaternion.Euler(0f, input.Yaw, 0f));
+
+            float targetRunBlend = input.Run ? 1f : 0f;
+            float runBlendSpeed = input.Run ? runBlendIncreasePerSecond : runBlendDecreasePerSecond;
+            _runBlend = Mathf.MoveTowards(_runBlend, targetRunBlend, runBlendSpeed * _dt);
 
             bool isGrounded = IsGrounded();
             motor.UpdateJumpWindows(isGrounded, input.Jump, ref _coyoteTicksRemaining, ref _jumpBufferTicksRemaining, _coyoteTicksMax, _jumpBufferTicksMax);
@@ -195,9 +251,24 @@ namespace RoachRace.Networking
             float yaw = rb.rotation.eulerAngles.y;
 
             Vector3 currentVel = rb.linearVelocity;
-            Vector3 planarAccel = motor.ComputePlanarAcceleration(input.Move, yaw, currentVel, isGrounded, _dt);
+            Vector3 planarAccel = motor.ComputePlanarAcceleration(input.Move, yaw, currentVel, isGrounded, _dt, _runBlend);
 
             rb.AddForce(planarAccel, ForceMode.Acceleration);
+        }
+
+        private void OnDestroy()
+        {
+            if (!IsOwner)
+                return;
+
+            moveAction.action.Disable();
+
+            jumpAction.action.performed -= JumpAction_Performed;
+            jumpAction.action.Disable();
+
+            runAction.action.started -= RunAction_Began;
+            runAction.action.canceled -= RunAction_Ended;
+            runAction.action.Disable();
         }
 
         private void OnCollisionStay(Collision collision)

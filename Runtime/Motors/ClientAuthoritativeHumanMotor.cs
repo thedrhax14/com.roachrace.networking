@@ -31,7 +31,15 @@ namespace RoachRace.Networking
         [SerializeField] private InputActionReference jumpAction;
         [SerializeField] private InputActionReference lookAction;
         [SerializeField] private InputActionReference aimAction;
+        [SerializeField] private InputActionReference runAction;
         [SerializeField] private float lookSensitivity = 15f;
+
+        [Header("Running")]
+        [Tooltip("Speed (blend units per second) used to ramp from walk to run while Shift is held.")]
+        [SerializeField, Min(0f)] private float runBlendIncreasePerSecond = 3f;
+
+        [Tooltip("Speed (blend units per second) used to return from run to walk after Shift is released. Higher = faster drop.")]
+        [SerializeField, Min(0f)] private float runBlendDecreasePerSecond = 9f;
 
         private Rigidbody rb;
         private CapsuleCollider capsuleCollider;
@@ -53,10 +61,18 @@ namespace RoachRace.Networking
         private Quaternion _aimRotation = Quaternion.identity;
         private Quaternion _syncedAimRotation = Quaternion.identity;
 
+        private bool _runHeld;
+        private float _runBlend;
+
         private readonly HashSet<int> _groundColliderIds = new();
 
         public Quaternion AimRotation => _syncedAimRotation;
 
+        /// <summary>
+        /// Unity lifecycle hook.<br/>
+        /// Typical usage: validates required serialized references and cached components so the motor fails fast instead of erroring mid-simulation.<br/>
+        /// Context: this motor is client authoritative; only the owning client reads input and simulates physics.
+        /// </summary>
         private void Awake()
         {
             if (motor == null)
@@ -77,6 +93,9 @@ namespace RoachRace.Networking
 
             if (aimAction == null || aimAction.action == null)
                 throw new System.NullReferenceException($"[{nameof(ClientAuthoritativeHumanMotor)}] aimAction is null on '{gameObject.name}'.");
+
+            if (runAction == null || runAction.action == null)
+                throw new System.NullReferenceException($"[{nameof(ClientAuthoritativeHumanMotor)}] runAction is null on '{gameObject.name}'.");
 
             if (!TryGetComponent(out inventory) || inventory == null)
                 throw new System.NullReferenceException($"[{nameof(ClientAuthoritativeHumanMotor)}] NetworkPlayerInventory is null on '{gameObject.name}'.");
@@ -169,6 +188,12 @@ namespace RoachRace.Networking
             aimAction.action.canceled += AimAction_Ended;
             aimAction.action.Enable();
 
+            runAction.action.started -= RunAction_Began;
+            runAction.action.started += RunAction_Began;
+            runAction.action.canceled -= RunAction_Ended;
+            runAction.action.canceled += RunAction_Ended;
+            runAction.action.Enable();
+
             if (virtualCamera != null)
             {
                 virtualCamera.transform.parent = null;
@@ -182,6 +207,34 @@ namespace RoachRace.Networking
                 return;
 
             _jumpQueued = true;
+        }
+
+        /// <summary>
+        /// Handles the start of the local run input for the owning client.<br/>
+        /// Typical usage: bound to the Input System <c>started</c> callback for hold-to-run behavior (e.g., Shift).<br/>
+        /// Context: ignored for non-owners so remote players do not drive local simulation state.
+        /// </summary>
+        /// <param name="ctx">Input callback context provided by the Input System.</param>
+        private void RunAction_Began(InputAction.CallbackContext ctx)
+        {
+            if (!IsOwner)
+                return;
+
+            _runHeld = true;
+        }
+
+        /// <summary>
+        /// Handles the end of the local run input for the owning client.<br/>
+        /// Typical usage: bound to the Input System <c>canceled</c> callback for hold-to-run behavior (e.g., Shift).<br/>
+        /// Context: ignored for non-owners so remote players do not drive local simulation state.
+        /// </summary>
+        /// <param name="ctx">Input callback context provided by the Input System.</param>
+        private void RunAction_Ended(InputAction.CallbackContext ctx)
+        {
+            if (!IsOwner)
+                return;
+
+            _runHeld = false;
         }
 
         private void LookAction_Performed(InputAction.CallbackContext ctx)
@@ -309,6 +362,11 @@ namespace RoachRace.Networking
             }
         }
 
+        /// <summary>
+        /// Unity physics tick.<br/>
+        /// Typical usage: owner-only simulation step (yaw, grounded/jump windows, and planar movement) for the client-authoritative body.<br/>
+        /// Context: running speed is controlled via Shift using a per-player run blend which ramps up smoothly and drops down faster.
+        /// </summary>
         private void FixedUpdate()
         {
             if (!IsClientInitialized || !IsOwner)
@@ -319,6 +377,10 @@ namespace RoachRace.Networking
                 motor.ComputeTickWindows(_dt, out _coyoteTicksMax, out _jumpBufferTicksMax);
 
             Vector2 move = moveAction.action.ReadValue<Vector2>();
+
+            float targetRunBlend = _runHeld ? 1f : 0f;
+            float runBlendSpeed = _runHeld ? runBlendIncreasePerSecond : runBlendDecreasePerSecond;
+            _runBlend = Mathf.MoveTowards(_runBlend, targetRunBlend, runBlendSpeed * _dt);
 
             _bodyYaw = motor.StepBodyYaw(_bodyYaw, _characterCamera != null ? _characterCamera.yawInput : _bodyYaw, _dt);
             rb.MoveRotation(Quaternion.Euler(0f, _bodyYaw, 0f));
@@ -338,7 +400,7 @@ namespace RoachRace.Networking
 
             float yaw = rb.rotation.eulerAngles.y;
             Vector3 currentVel = rb.linearVelocity;
-            Vector3 planarAccel = motor.ComputePlanarAcceleration(move, yaw, currentVel, isGrounded, _dt);
+            Vector3 planarAccel = motor.ComputePlanarAcceleration(move, yaw, currentVel, isGrounded, _dt, _runBlend);
             rb.AddForce(planarAccel, ForceMode.Acceleration);
 
             survivorRemoteAnimator.SetPitchAndYaw(_lookRotation.x, _lookRotation.y);
@@ -398,6 +460,10 @@ namespace RoachRace.Networking
                 aimAction.action.started -= AimAction_Began;
                 aimAction.action.canceled -= AimAction_Ended;
                 aimAction.action.Disable();
+
+                runAction.action.started -= RunAction_Began;
+                runAction.action.canceled -= RunAction_Ended;
+                runAction.action.Disable();
             }
             if(_characterCamera != null)
                 Destroy(_characterCamera.gameObject);

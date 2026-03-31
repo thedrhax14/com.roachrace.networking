@@ -3,6 +3,11 @@ using UnityEngine;
 namespace RoachRace.Networking
 {
     [CreateAssetMenu(menuName = "RoachRace/Networking/Human Motor Math Profile", fileName = "HumanMotorMathProfile")]
+    /// <summary>
+    /// ScriptableObject configuration and math helpers for a humanoid motor.<br/>
+    /// Typical usage: referenced by a motor NetworkBehaviour to compute planar acceleration, jump velocity changes, yaw stepping, and grounded contact checks.<br/>
+    /// Context: this asset is pure tuning + math; per-player state (e.g., run blend) is owned by the motor behaviour.
+    /// </summary>
     public class HumanMotorMathProfile : ScriptableObject
     {
         [Header("Tuning")]
@@ -94,15 +99,46 @@ namespace RoachRace.Networking
             return true;
         }
 
+        /// <summary>
+        /// Computes a desired planar acceleration to approach a target planar velocity derived from move input.<br/>
+        /// Typical usage: called each physics tick by a motor behaviour and applied via <c>Rigidbody.AddForce(..., ForceMode.Acceleration)</c>.<br/>
+        /// Legacy behavior: when invoked without a run blend, forward input is treated as "run" while other directions are treated as "walk".
+        /// </summary>
+        /// <param name="moveInput">Move input vector in local input space (x = strafe, y = forward), typically in [-1..1].</param>
+        /// <param name="yawDegrees">Current body yaw in degrees used to rotate input into world space.</param>
+        /// <param name="currentVelocity">Current rigidbody velocity in world space.</param>
+        /// <param name="isGrounded">True when grounded; affects air control.</param>
+        /// <param name="dt">Physics timestep (seconds).</param>
+        /// <returns>Planar acceleration (m/s^2) in world space.</returns>
         public Vector3 ComputePlanarAcceleration(Vector2 moveInput, float yawDegrees, Vector3 currentVelocity, bool isGrounded, float dt)
+        {
+            Vector2 clampedInput = Vector2.ClampMagnitude(moveInput, 1f);
+            const float axisDeadZone = 0.01f;
+            bool hasForwardInput = clampedInput.y > axisDeadZone;
+            float legacyRunBlend = hasForwardInput ? 1f : 0f;
+            return ComputePlanarAcceleration(moveInput, yawDegrees, currentVelocity, isGrounded, dt, legacyRunBlend);
+        }
+
+        /// <summary>
+        /// Computes a desired planar acceleration to approach a target planar velocity derived from move input and a walk↔run blend.<br/>
+        /// Typical usage: a motor behaviour computes a per-player run blend (0 = walk, 1 = run) based on Shift and passes it here.<br/>
+        /// Context: the returned acceleration is clamped by configured acceleration/deceleration limits and reduced in-air via the air control multiplier.
+        /// </summary>
+        /// <param name="moveInput">Move input vector in local input space (x = strafe, y = forward), typically in [-1..1].</param>
+        /// <param name="yawDegrees">Current body yaw in degrees used to rotate input into world space.</param>
+        /// <param name="currentVelocity">Current rigidbody velocity in world space.</param>
+        /// <param name="isGrounded">True when grounded; affects air control.</param>
+        /// <param name="dt">Physics timestep (seconds).</param>
+        /// <param name="runBlend01">Blend between walk and run speed. 0 = walk, 1 = run.</param>
+        /// <returns>Planar acceleration (m/s^2) in world space.</returns>
+        public Vector3 ComputePlanarAcceleration(Vector2 moveInput, float yawDegrees, Vector3 currentVelocity, bool isGrounded, float dt, float runBlend01)
         {
             Vector2 clampedInput = Vector2.ClampMagnitude(moveInput, 1f);
             float inputMag = Mathf.Clamp01(clampedInput.magnitude);
             bool hasInput = inputMag > 0.0001f;
 
-            const float axisDeadZone = 0.01f;
-            bool hasForwardInput = clampedInput.y > axisDeadZone;
-            float moveSpeed = hasForwardInput ? runSpeed : walkSpeed;
+            float clampedRunBlend = Mathf.Clamp01(runBlend01);
+            float moveSpeed = Mathf.Lerp(walkSpeed, runSpeed, clampedRunBlend);
 
             Quaternion yawRot = Quaternion.Euler(0f, yawDegrees, 0f);
             Vector3 moveWorld = yawRot * new Vector3(clampedInput.x, 0f, clampedInput.y);
