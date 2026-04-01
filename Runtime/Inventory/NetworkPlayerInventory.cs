@@ -35,6 +35,7 @@ namespace RoachRace.Networking.Inventory
     /// - Server owns slot contents and selection.<br/>
     /// - Client requests selection/use via RPCs.<br/>
     /// - Selection toggles child item visibility via PlayerItemRegistry.<br/>
+    /// - Slots use a visible-prefix/hidden-suffix model: indices 0..slotCount-1 are user-facing, while any indices >= slotCount are hidden/non-selectable inventory storage.<br/>
     /// </summary>
     public sealed class NetworkPlayerInventory : NetworkBehaviour, IPlayerInventory
     {
@@ -69,6 +70,8 @@ namespace RoachRace.Networking.Inventory
         public int SlotCount => slotCount;
         public int SelectedSlotIndex => _selectedSlotIndex.Value;
         public bool InventoryReady => _inventoryReady.Value;
+
+        private int VisibleSlotCount => slotCount;
 
         private bool _uiModelDirty;
         private bool _characterAnimationInitialized = false;
@@ -287,8 +290,8 @@ namespace RoachRace.Networking.Inventory
         /// Server-only helper to grant starting items defined in <see cref="initialLoadout"/>.<br/>
         /// <br/>
         /// Typical behavior:<br/>
-        /// - Attempts to add each configured item to slots (stacking where possible).<br/>
-        /// - Ensures the selected slot points at a non-empty slot if any were granted.<br/>
+        /// - Attempts to add each configured item into either the visible slot prefix or hidden slot suffix, depending on the item's inventory rules.<br/>
+        /// - Ensures the selected slot points at a non-empty visible slot if any visible items were granted.<br/>
         /// <br/>
         /// Expected context:<br/>
         /// - Server only.<br/>
@@ -308,14 +311,15 @@ namespace RoachRace.Networking.Inventory
                 int amt = entry.amount;
                 if (amt == 0) amt = 1;
 
-                TryAddItem(id, amt);
+                AddItemByVisibility(id, amt);
             }
 
-            // If nothing was auto-selected, keep selection on a non-empty slot if possible.
+            // If nothing was auto-selected, keep selection on a non-empty visible slot if possible.
             int current = _selectedSlotIndex.Value;
-            if (current < 0 || current >= Slots.Count || Slots[current].IsEmpty)
+            if (current < 0 || current >= VisibleSlotCount || current >= Slots.Count || Slots[current].IsEmpty)
             {
-                for (int i = 0; i < Slots.Count; i++)
+                int visibleCount = Mathf.Min(VisibleSlotCount, Slots.Count);
+                for (int i = 0; i < visibleCount; i++)
                 {
                     if (Slots[i].IsEmpty) continue;
                     _selectedSlotIndex.Value = i;
@@ -657,6 +661,7 @@ namespace RoachRace.Networking.Inventory
         /// Requests selecting an inventory slot.<br/>
         /// <br/>
         /// Typical behavior:<br/>
+        /// - Accepts only indices within the visible/selectable slot prefix.<br/>
         /// - If running on the server, applies selection immediately.<br/>
         /// - Otherwise, only the local owner can request selection via RPC.<br/>
         /// </summary>
@@ -666,7 +671,7 @@ namespace RoachRace.Networking.Inventory
         /// </returns>
         public bool TrySelectSlot(int slotIndex)
         {
-            if (slotIndex < 0 || slotIndex >= slotCount) return false;
+            if (slotIndex < 0 || slotIndex >= VisibleSlotCount) return false;
 
             if (IsServerInitialized)
             {
@@ -914,9 +919,9 @@ namespace RoachRace.Networking.Inventory
         /// Server-authoritative add to inventory.<br/>
         ///<br/>
         /// Typical behavior:<br/>
-        /// - If the item is stackable, fills existing stacks up to max stack.<br/>
-        /// - Puts any remaining amount into empty slots.<br/>
-        /// - May auto-select newly filled slot if current selection is empty and <see cref="autoSelectOnPickup"/> is enabled.<br/>
+        /// - Adds into the visible/selectable slot prefix only.<br/>
+        /// - If the item is stackable, fills existing visible stacks up to max stack.<br/>
+        /// - Puts any remaining amount into empty visible slots.<br/>
         /// <br/>
         /// Notes:<br/>
         /// - If inventory is full, some or all of <paramref name="amount"/> may not fit; this method currently still returns <c>true</c><br/>
@@ -929,56 +934,14 @@ namespace RoachRace.Networking.Inventory
         [Server]
         public bool TryAddItem(ushort itemId, int amount)
         {
-            if (itemId == 0) return false;
-            if (amount == 0) return false;
-
-            // If stackable, try to stack first.
-            if (TryGetDefinition(itemId, out var def) && def != null && def.IsStackable)
-            {
-                for (int i = 0; i < Slots.Count; i++)
-                {
-                    var s = Slots[i];
-                    if (s.ItemId != itemId) continue;
-
-                    int maxStack = def.MaxStack;
-                    int canAdd = maxStack - s.Count;
-                    if (canAdd <= 0) continue;
-
-                    int toAdd = Mathf.Min(canAdd, amount);
-                    s.Count += toAdd;
-                    Slots[i] = s;
-                    amount -= toAdd;
-                    if (amount == 0) return true;
-                }
-            }
-
-            // Put remaining into empty slots.
-            for (int i = 0; i < Slots.Count && amount > 0; i++)
-            {
-                var s = Slots[i];
-                if (!s.IsEmpty) continue;
-
-                int put;
-                if (TryGetDefinition(itemId, out var def2) && def2 != null && def2.IsStackable)
-                {
-                    int maxStack = def2.MaxStack;
-                    put = Mathf.Min(maxStack, amount);
-                }
-                else
-                {
-                    put = 1;
-                }
-
-                Slots[i] = new InventorySlotState { ItemId = itemId, Count = put };
-                amount -= put;
-            }
-
-            return true;
+            int added = AddItemByVisibility(itemId, amount);
+            return added > 0;
         }
 
         /// <summary>
-        /// Server-authoritative add to inventory, returning exactly how many units were actually added.
-        /// Useful when granting from a world pickup which must retain leftover units if the inventory is full.
+        /// Server-authoritative add to inventory, returning exactly how many units were actually added.<br/>
+        /// Typical usage: stamina recovery, world pickups, and other server-side grants that need the exact inserted amount.<br/>
+        /// Configuration/context: when at least one unit is added, this method also notifies server delta observers with a positive delta so health/stamina bridges can refresh owner-local UI state.
         /// </summary>
         /// <returns>
         /// Units successfully added ($0..amount$).
@@ -986,16 +949,85 @@ namespace RoachRace.Networking.Inventory
         [Server]
         public int AddItemUpTo(ushort itemId, int amount)
         {
+            int added = AddItemByVisibility(itemId, amount);
+
+            if (added != 0)
+                NotifyServerDeltaObservers(added, weaponIconKey: string.Empty, instigatorConnectionId: -1, instigatorObjectId: -1, hasSourceWorldPosition: false, sourceWorldPosition: default, hasTargetWorldPosition: false, targetWorldPosition: default);
+
+            return added;
+        }
+
+        /// <summary>
+        /// Server-only helper that adds items according to the item's configured storage visibility.<br/>
+        /// Typical usage: central routing point for loadouts, pickups, and gameplay grants so all add paths honor the same visible-vs-hidden rule.<br/>
+        /// Configuration/context: items without inventory rules default to the visible/selectable slot prefix.
+        /// </summary>
+        /// <param name="itemId">Item definition id to add.</param>
+        /// <param name="amount">Requested amount to add.</param>
+        /// <returns>The amount actually inserted.</returns>
+        [Server]
+        private int AddItemByVisibility(ushort itemId, int amount)
+        {
+            if (GetSlotVisibility(itemId) == InventorySlotVisibility.HiddenSlots)
+                return AddItemUpToHiddenRange(itemId, amount);
+
+            return AddItemUpToVisibleRange(itemId, amount);
+        }
+
+        /// <summary>
+        /// Server-only helper that adds up to <paramref name="amount"/> units into the visible slot prefix.<br/>
+        /// Typical usage: pickups and gameplay grants that should remain selectable by the player.<br/>
+        /// Configuration/context: operates only within indices 0..<see cref="VisibleSlotCount"/> and never expands the collection beyond that visible prefix.
+        /// </summary>
+        /// <param name="itemId">Item definition id to add.</param>
+        /// <param name="amount">Requested amount to add.</param>
+        /// <returns>The amount actually inserted into visible slots.</returns>
+        [Server]
+        private int AddItemUpToVisibleRange(ushort itemId, int amount)
+        {
+            return AddItemUpToInRange(itemId, amount, startIndex: 0, endExclusive: VisibleSlotCount, allowExpandPastRange: false);
+        }
+
+        /// <summary>
+        /// Server-only helper that adds up to <paramref name="amount"/> units into the hidden slot suffix.<br/>
+        /// Typical usage: spawn-time grants or internal inventory resources that gameplay tracks by item id but the player must not select directly.<br/>
+        /// Configuration/context: operates only at indices >= <see cref="VisibleSlotCount"/> and expands the slot list when no hidden empty slot is available.
+        /// </summary>
+        /// <param name="itemId">Item definition id to add.</param>
+        /// <param name="amount">Requested amount to add.</param>
+        /// <returns>The amount actually inserted into hidden slots.</returns>
+        [Server]
+        private int AddItemUpToHiddenRange(ushort itemId, int amount)
+        {
+            return AddItemUpToInRange(itemId, amount, startIndex: VisibleSlotCount, endExclusive: Slots.Count, allowExpandPastRange: true);
+        }
+
+        /// <summary>
+        /// Server-only helper that inserts items into a constrained slot range.<br/>
+        /// Typical usage: backs both visible-prefix and hidden-suffix additions while reusing the same stacking rules.<br/>
+        /// Configuration/context: when <paramref name="allowExpandPastRange"/> is true, new empty slots are appended after the current range and reused for the requested addition.
+        /// </summary>
+        /// <param name="itemId">Item definition id to add.</param>
+        /// <param name="amount">Requested amount to add.</param>
+        /// <param name="startIndex">Inclusive start of the target range.</param>
+        /// <param name="endExclusive">Exclusive end of the current target range.</param>
+        /// <param name="allowExpandPastRange">Whether new slots may be appended when the current range has no capacity.</param>
+        /// <returns>The amount actually inserted into the requested range.</returns>
+        [Server]
+        private int AddItemUpToInRange(ushort itemId, int amount, int startIndex, int endExclusive, bool allowExpandPastRange)
+        {
             if (itemId == 0) return 0;
             if (amount <= 0) return 0;
 
+            int clampedStart = Mathf.Max(0, startIndex);
+            int clampedEnd = Mathf.Max(clampedStart, endExclusive);
             int remaining = amount;
             int added = 0;
 
-            // If stackable, fill existing stacks first.
             if (TryGetDefinition(itemId, out var def) && def != null && def.IsStackable)
             {
-                for (int i = 0; i < Slots.Count && remaining > 0; i++)
+                int stackSearchEnd = Mathf.Min(clampedEnd, Slots.Count);
+                for (int i = clampedStart; i < stackSearchEnd && remaining > 0; i++)
                 {
                     var s = Slots[i];
                     if (s.IsEmpty) continue;
@@ -1013,29 +1045,61 @@ namespace RoachRace.Networking.Inventory
                 }
             }
 
-            // Put remaining into empty slots.
-            for (int i = 0; i < Slots.Count && remaining > 0; i++)
+            int emptySearchEnd = Mathf.Min(clampedEnd, Slots.Count);
+            for (int i = clampedStart; i < emptySearchEnd && remaining > 0; i++)
             {
                 var s = Slots[i];
                 if (!s.IsEmpty) continue;
 
-                int put;
-                if (TryGetDefinition(itemId, out var def2) && def2 != null && def2.IsStackable)
-                {
-                    int maxStack = def2.MaxStack;
-                    put = Mathf.Min(maxStack, remaining);
-                }
-                else
-                {
-                    put = 1;
-                }
-
+                int put = GetUnitsForNewStack(itemId, remaining);
                 Slots[i] = new InventorySlotState { ItemId = itemId, Count = put };
                 remaining -= put;
                 added += put;
             }
 
+            if (!allowExpandPastRange)
+                return added;
+
+            while (remaining > 0)
+            {
+                int put = GetUnitsForNewStack(itemId, remaining);
+                Slots.Add(new InventorySlotState { ItemId = itemId, Count = put });
+                remaining -= put;
+                added += put;
+            }
+
             return added;
+        }
+
+        /// <summary>
+        /// Resolves how many units should be stored in a newly created stack for <paramref name="itemId"/>.<br/>
+        /// Typical usage: called by range-based add helpers before writing a fresh slot entry.<br/>
+        /// Configuration/context: non-stackable items always occupy one unit per slot, while stackable items are capped by the authored max stack.
+        /// </summary>
+        /// <param name="itemId">Item definition id being inserted.</param>
+        /// <param name="remaining">Remaining amount still to insert.</param>
+        /// <returns>Units to place into the new slot.</returns>
+        private int GetUnitsForNewStack(ushort itemId, int remaining)
+        {
+            if (TryGetDefinition(itemId, out var def) && def != null && def.IsStackable)
+                return Mathf.Min(def.MaxStack, remaining);
+
+            return 1;
+        }
+
+        /// <summary>
+        /// Resolves whether an item should be stored in visible or hidden slots.<br/>
+        /// Typical usage: add paths call this once per item id so all grants follow the authored inventory rule.<br/>
+        /// Configuration/context: items without definitions or inventory rules default to <see cref="InventorySlotVisibility.VisibleSlots"/>.
+        /// </summary>
+        /// <param name="itemId">Item definition id to inspect.</param>
+        /// <returns>The configured slot visibility for the item.</returns>
+        private InventorySlotVisibility GetSlotVisibility(ushort itemId)
+        {
+            if (!TryGetDefinition(itemId, out var def) || def == null || def.inventoryRules == null)
+                return InventorySlotVisibility.VisibleSlots;
+
+            return def.inventoryRules.SlotVisibility;
         }
 
         /// <summary>
@@ -1203,10 +1267,7 @@ namespace RoachRace.Networking.Inventory
                 return -consumed;
             }
 
-            int added = AddItemUpTo(itemId, delta);
-            if (added != 0)
-                NotifyServerDeltaObservers(added, weaponIconKey, instigatorConnectionId, instigatorObjectId, hasSourceWorldPosition, sourceWorldPosition, hasTargetWorldPosition, targetWorldPosition);
-            return added;
+            return AddItemUpTo(itemId, delta);
         }
 
         [Server]
@@ -1218,7 +1279,16 @@ namespace RoachRace.Networking.Inventory
             foreach (var observer in _serverDeltaObservers.ToArray())
             {
                 if (observer == null) continue;
-                observer.OnServerInventoryItemDeltaApplied(this, appliedDelta, weaponIconKey, instigatorConnectionId, instigatorObjectId, hasSourceWorldPosition, sourceWorldPosition, hasTargetWorldPosition, targetWorldPosition);
+                observer.OnServerInventoryItemDeltaApplied(
+                    this,
+                    appliedDelta,
+                    weaponIconKey,
+                    instigatorConnectionId,
+                    instigatorObjectId,
+                    hasSourceWorldPosition,
+                    sourceWorldPosition,
+                    hasTargetWorldPosition,
+                    targetWorldPosition);
             }
         }
 

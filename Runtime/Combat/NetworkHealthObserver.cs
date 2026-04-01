@@ -2,16 +2,18 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using FishNet.Object;
+using FishNet.Object.Synchronizing;
 using RoachRace.Interaction;
 using RoachRace.Networking.Inventory;
+using RoachRace.UI.Models;
 using UnityEngine;
 
 namespace RoachRace.Networking.Combat
 {
     /// <summary>
-    /// Observes authoritative inventory-backed health and starts death handling when health reaches zero.<br/>
-    /// Typical usage: attach this beneath a controller/player object that owns a <see cref="NetworkPlayerInventory"/> and a health item definition so server-side systems can observe damage and death without C# events.<br/>
-    /// Configuration/context: this runs on the server, derives health from the configured <see cref="healthAsset"/>, and forwards damage attribution provided by inventory deltas.
+    /// Observes authoritative inventory-backed health, mirrors health into the owner-local player stats model, and starts death handling when health reaches zero.<br/>
+    /// Typical usage: attach this beneath a controller/player object that owns a <see cref="NetworkPlayerInventory"/> and a health item definition so server-side systems can observe damage and death without C# events while the owning client renders health through <see cref="PlayerStatsModel"/>.<br/>
+    /// Configuration/context: this runs on the server, derives health from the configured <see cref="healthAsset"/>, forwards damage attribution provided by inventory deltas, and updates the owning client's UI model through synchronized values.
     /// </summary>
     public sealed class NetworkHealthObserver : NetworkBehaviour, INetworkPlayerInventoryDeltaObserver
     {
@@ -19,15 +21,57 @@ namespace RoachRace.Networking.Combat
         [SerializeField]
         [Tooltip("ItemDefinition id used as the key for health units in inventory.")]
         private ItemDefinition healthAsset;
+
+        [Header("UI")]
+        [SerializeField]
+        [Tooltip("Owner-local PlayerStatsModel to update when health changes.")]
+        private PlayerStatsModel playerStatsModel;
+
+        [Header("Health Capacity")]
+        [SerializeField, Min(0)]
+        [Tooltip("Optional starting max health. If 0, the first inventory snapshot becomes the baseline max.")]
+        private int startingMaxHealth = 100;
+
         [Header("Death/Despawn Settings")]
         [Tooltip("NetworkObject to despawn on death. If null, will attempt to find a NetworkObject in parent hierarchy.")]
         public NetworkObject objectToDespawn;
         [Tooltip("Optional NetworkObject to spawn on death (e.g., explosion effect).")]
         public NetworkObject objectToSpawn;
         NetworkPlayerInventory inventory;
+        private readonly SyncVar<int> _currentHealth = new(0);
+        private readonly SyncVar<int> _maxHealth = new(0);
+        private bool _clientSubscribed;
         readonly HashSet<INetworkHealthServerDeathObserver> serverDeathObservers = new();
         readonly HashSet<INetworkHealthServerDamageObserver> serverDamageObservers = new();
         public int currentHealth;
+
+        /// <summary>
+        /// Gets the synchronized current health snapshot.<br/>
+        /// Typical usage: read by owner-local presentation or gameplay code that needs to know whether the player still has health remaining.<br/>
+        /// Configuration/context: the value is maintained by the server from inventory-backed health totals.
+        /// </summary>
+        public int CurrentHealth => _currentHealth.Value;
+
+        /// <summary>
+        /// Gets the synchronized maximum health snapshot.<br/>
+        /// Typical usage: feed the maximum value into <see cref="PlayerStatsModel.SetHealth(int, int)"/> so the HUD can render a current/max pair.<br/>
+        /// Configuration/context: if the inventory total grows beyond the initial baseline, this value expands to match the observed maximum.
+        /// </summary>
+        public int MaxHealth => _maxHealth.Value;
+
+        /// <summary>
+        /// Validates required dependencies before the health observer starts network lifecycle processing.<br/>
+        /// Typical usage: Unity invokes this during object initialization so the component can fail fast if the health inventory dependency is missing.<br/>
+        /// Configuration/context: the owner-local <see cref="playerStatsModel"/> is validated later because only the owning client needs it.
+        /// </summary>
+        private void Awake()
+        {
+            if (healthAsset == null)
+            {
+                Debug.LogError($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': healthAsset.", gameObject);
+                throw new InvalidOperationException($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': healthAsset.");
+            }
+        }
 
         /// <summary>
         /// Subscribes to the authoritative inventory so health can be recalculated from server-side item totals.<br/>
@@ -51,7 +95,30 @@ namespace RoachRace.Networking.Combat
             }
 
             inventory.AddServerDeltaObserver(this);
-            currentHealth = inventory.GetTotalCountByItemId(healthAsset.id);
+            RefreshServerSnapshot();
+        }
+
+        /// <summary>
+        /// Subscribes the owning client to synchronized health changes and pushes the current snapshot into the player stats model.<br/>
+        /// Typical usage: FishNet invokes this on all clients; only the owner binds UI state because the player stats model is owner-local.
+        /// </summary>
+        public override void OnStartClient()
+        {
+            base.OnStartClient();
+
+            _currentHealth.OnChange += CurrentHealth_OnChange;
+            _maxHealth.OnChange += MaxHealth_OnChange;
+
+            if (IsOwner)
+            {
+                if (playerStatsModel == null)
+                {
+                    Debug.LogError($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': playerStatsModel.", gameObject);
+                    throw new InvalidOperationException($"[{nameof(NetworkHealthObserver)}] Missing required reference on '{gameObject.name}': playerStatsModel.");
+                }
+
+                PushHealthToPlayerStatsModel();
+            }
         }
 
         /// <summary>
@@ -65,6 +132,19 @@ namespace RoachRace.Networking.Combat
                 inventory.RemoveServerDeltaObserver(this);
 
             base.OnStopServer();
+        }
+
+        /// <summary>
+        /// Unsubscribes the client-side health listeners when the object stops on a client.<br/>
+        /// Typical usage: FishNet invokes this during teardown or ownership changes to avoid stale callbacks.<br/>
+        /// Server/client constraints: client-side lifecycle hook.
+        /// </summary>
+        public override void OnStopClient()
+        {
+            _currentHealth.OnChange -= CurrentHealth_OnChange;
+            _maxHealth.OnChange -= MaxHealth_OnChange;
+
+            base.OnStopClient();
         }
 
         /// <summary>
@@ -90,16 +170,17 @@ namespace RoachRace.Networking.Combat
                 return;
 
             int previousHealth = currentHealth;
-            currentHealth = inventory.GetTotalCountByItemId(healthAsset.id);
-            int damageAmount = Mathf.Max(0, previousHealth - currentHealth);
+            RefreshServerSnapshot();
+            int nextHealth = currentHealth;
+            int damageAmount = Mathf.Max(0, previousHealth - nextHealth);
             if (damageAmount > 0)
             {
                 Vector3 resolvedTargetWorldPosition = hasTargetWorldPosition ? targetWorldPosition : transform.position;
-                var damageInfo = new NetworkHealthDamageInfo(previousHealth, currentHealth, damageAmount, weaponIconKey, instigatorConnectionId, instigatorObjectId, resolvedTargetWorldPosition, hasSourceWorldPosition, sourceWorldPosition);
+                var damageInfo = new NetworkHealthDamageInfo(previousHealth, nextHealth, damageAmount, weaponIconKey, instigatorConnectionId, instigatorObjectId, resolvedTargetWorldPosition, hasSourceWorldPosition, sourceWorldPosition);
                 NotifyServerDamageObservers(damageInfo);
             }
 
-            if (currentHealth <= 0)
+            if (nextHealth <= 0)
             {
                 foreach (var observer in serverDeathObservers)
                 {
@@ -219,6 +300,62 @@ namespace RoachRace.Networking.Combat
 
                 observer.OnNetworkHealthServerDamaged(this, damageInfo);
             }
+        }
+
+        /// <summary>
+        /// Rebuilds the authoritative health snapshot from inventory and publishes it into the synchronized values.<br/>
+        /// Typical usage: called after server bootstrap and after every inventory delta to keep the current/max snapshot current.
+        /// </summary>
+        private void RefreshServerSnapshot()
+        {
+            if (!IsServerInitialized || inventory == null || healthAsset == null)
+                return;
+
+            int current = inventory.GetTotalCountByItemId(healthAsset.id);
+            int max = startingMaxHealth > 0 ? startingMaxHealth : current;
+            if (current > max)
+                max = current;
+
+            currentHealth = current;
+            _currentHealth.Value = current;
+            _maxHealth.Value = max;
+        }
+
+        /// <summary>
+        /// Pushes the synchronized health snapshot into the owner-local player stats model.<br/>
+        /// Typical usage: called when the owner client receives health updates so the HUD can refresh immediately.<br/>
+        /// Configuration/context: ignored on non-owners because their player stats model should not be touched by remote players.
+        /// </summary>
+        private void PushHealthToPlayerStatsModel()
+        {
+            if (!IsOwner || playerStatsModel == null)
+                return;
+
+            playerStatsModel.SetHealth(_currentHealth.Value, _maxHealth.Value);
+        }
+
+        /// <summary>
+        /// Forwards current health changes to the owner-local player stats model.<br/>
+        /// Typical usage: wired to the synchronized health value so the HUD stays in sync when the server consumes or restores health.
+        /// </summary>
+        /// <param name="previous">Previous synchronized health value.</param>
+        /// <param name="next">New synchronized health value.</param>
+        /// <param name="asServer">True when invoked on the server side of the sync callback.</param>
+        private void CurrentHealth_OnChange(int previous, int next, bool asServer)
+        {
+            PushHealthToPlayerStatsModel();
+        }
+
+        /// <summary>
+        /// Forwards current max health changes to the owner-local player stats model.<br/>
+        /// Typical usage: wired to the synchronized health cap so the HUD reflects capacity increases as well as consumption.
+        /// </summary>
+        /// <param name="previous">Previous synchronized max health value.</param>
+        /// <param name="next">New synchronized max health value.</param>
+        /// <param name="asServer">True when invoked on the server side of the sync callback.</param>
+        private void MaxHealth_OnChange(int previous, int next, bool asServer)
+        {
+            PushHealthToPlayerStatsModel();
         }
     }
 }

@@ -44,6 +44,8 @@ namespace RoachRace.Networking
         private Rigidbody rb;
         private CapsuleCollider capsuleCollider;
         private NetworkPlayerInventory inventory;
+        private NetworkStaminaObserver staminaObserver;
+        private ServerStaminaController staminaController;
 
         private float _dt;
         private float _bodyYaw;
@@ -99,6 +101,15 @@ namespace RoachRace.Networking
 
             if (!TryGetComponent(out inventory) || inventory == null)
                 throw new System.NullReferenceException($"[{nameof(ClientAuthoritativeHumanMotor)}] NetworkPlayerInventory is null on '{gameObject.name}'.");
+
+            staminaObserver = GetComponentInChildren<NetworkStaminaObserver>();
+            staminaController = GetComponentInChildren<ServerStaminaController>();
+
+             if (staminaObserver == null)
+                throw new System.NullReferenceException($"[{nameof(ClientAuthoritativeHumanMotor)}] NetworkStaminaObserver is null on '{gameObject.name}'.");
+
+             if (staminaController == null)
+                throw new System.NullReferenceException($"[{nameof(ClientAuthoritativeHumanMotor)}] ServerStaminaController is null on '{gameObject.name}'.");
 
             if (!TryGetComponent(out survivorRemoteAnimator) || survivorRemoteAnimator == null)
                 throw new System.NullReferenceException($"[{nameof(ClientAuthoritativeHumanMotor)}] SurvivorRemoteAnimator is null on '{gameObject.name}'.");
@@ -221,6 +232,9 @@ namespace RoachRace.Networking
                 return;
 
             _runHeld = true;
+
+            if (staminaController != null)
+                staminaController.SetRunningRequestedServerRpc(true);
         }
 
         /// <summary>
@@ -235,6 +249,9 @@ namespace RoachRace.Networking
                 return;
 
             _runHeld = false;
+
+            if (staminaController != null)
+                staminaController.SetRunningRequestedServerRpc(false);
         }
 
         private void LookAction_Performed(InputAction.CallbackContext ctx)
@@ -378,7 +395,8 @@ namespace RoachRace.Networking
 
             Vector2 move = moveAction.action.ReadValue<Vector2>();
 
-            float targetRunBlend = _runHeld ? 1f : 0f;
+            bool canRun = staminaController != null ? staminaController.CanRun : staminaObserver == null || staminaObserver.HasStamina;
+            float targetRunBlend = _runHeld && canRun ? 1f : 0f;
             float runBlendSpeed = _runHeld ? runBlendIncreasePerSecond : runBlendDecreasePerSecond;
             _runBlend = Mathf.MoveTowards(_runBlend, targetRunBlend, runBlendSpeed * _dt);
 
