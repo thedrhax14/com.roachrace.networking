@@ -316,12 +316,12 @@ namespace RoachRace.Networking.Inventory
 
             // If nothing was auto-selected, keep selection on a non-empty visible slot if possible.
             int current = _selectedSlotIndex.Value;
-            if (current < 0 || current >= VisibleSlotCount || current >= Slots.Count || Slots[current].IsEmpty)
+            if (current < 0 || current >= VisibleSlotCount || current >= Slots.Count || Slots[current].ItemId == 0 || Slots[current].Count <= 0)
             {
                 int visibleCount = Mathf.Min(VisibleSlotCount, Slots.Count);
                 for (int i = 0; i < visibleCount; i++)
                 {
-                    if (Slots[i].IsEmpty) continue;
+                    if (Slots[i].ItemId == 0 || Slots[i].Count <= 0) continue;
                     _selectedSlotIndex.Value = i;
                     break;
                 }
@@ -630,7 +630,7 @@ namespace RoachRace.Networking.Inventory
         {
             item = null;
             slotState = GetSlot(_selectedSlotIndex.Value);
-            if (slotState.IsEmpty) return false;
+            if (slotState.ItemId == 0) return false;
             if (itemRegistry == null) return false;
             return itemRegistry.TryGetItem(slotState.ItemId, out item);
         }
@@ -736,7 +736,7 @@ namespace RoachRace.Networking.Inventory
             for (int i = 0; i < Slots.Count; i++)
             {
                 var s = Slots[i];
-                if (s.IsEmpty) continue;
+                if (s.ItemId == 0) continue;
                 if (s.ItemId != itemId) continue;
                 if (s.Count <= 0) continue;
                 return true;
@@ -782,7 +782,7 @@ namespace RoachRace.Networking.Inventory
                 return false;
 
             var slot = Slots[idx];
-            if (slot.IsEmpty)
+            if (slot.ItemId == 0 || slot.Count <= 0)
                 return false;
 
             if (itemRegistry == null)
@@ -859,7 +859,7 @@ namespace RoachRace.Networking.Inventory
             for (int i = 0; i < Slots.Count; i++)
             {
                 var s = Slots[i];
-                if (s.IsEmpty) continue;
+                if (s.ItemId == 0) continue;
                 if (s.ItemId != itemId) continue;
                 if (s.Count <= 0) continue;
                 slotIndex = i;
@@ -895,8 +895,16 @@ namespace RoachRace.Networking.Inventory
 
                 if (slot.Count <= 1)
                 {
-                    Slots[slotIndex] = default;
-                    slotBecameEmpty = true;
+                    if (def.RemovesInventoryWhenDepleted)
+                    {
+                        Slots[slotIndex] = default;
+                        slotBecameEmpty = true;
+                    }
+                    else
+                    {
+                        slot.Count = 0;
+                        Slots[slotIndex] = slot;
+                    }
                 }
                 else
                 {
@@ -952,7 +960,7 @@ namespace RoachRace.Networking.Inventory
             int added = AddItemByVisibility(itemId, amount);
 
             if (added != 0)
-                NotifyServerDeltaObservers(added, weaponIconKey: string.Empty, instigatorConnectionId: -1, instigatorObjectId: -1, hasSourceWorldPosition: false, sourceWorldPosition: default, hasTargetWorldPosition: false, targetWorldPosition: default);
+                NotifyServerDeltaObservers(itemId, added, weaponIconKey: string.Empty, instigatorConnectionId: -1, instigatorObjectId: -1, hasSourceWorldPosition: false, sourceWorldPosition: default, hasTargetWorldPosition: false, targetWorldPosition: default);
 
             return added;
         }
@@ -1030,7 +1038,7 @@ namespace RoachRace.Networking.Inventory
                 for (int i = clampedStart; i < stackSearchEnd && remaining > 0; i++)
                 {
                     var s = Slots[i];
-                    if (s.IsEmpty) continue;
+                    if (s.ItemId == 0) continue;
                     if (s.ItemId != itemId) continue;
 
                     int maxStack = def.MaxStack;
@@ -1045,11 +1053,28 @@ namespace RoachRace.Networking.Inventory
                 }
             }
 
+            if (remaining > 0 && TryGetDefinition(itemId, out var nonStackDef) && nonStackDef != null && !nonStackDef.IsStackable)
+            {
+                int depletedSearchEnd = Mathf.Min(clampedEnd, Slots.Count);
+                for (int i = clampedStart; i < depletedSearchEnd && remaining > 0; i++)
+                {
+                    var s = Slots[i];
+                    if (s.ItemId != itemId) continue;
+                    if (s.Count > 0) continue;
+
+                    int put = GetUnitsForNewStack(itemId, remaining);
+                    s.Count = put;
+                    Slots[i] = s;
+                    remaining -= put;
+                    added += put;
+                }
+            }
+
             int emptySearchEnd = Mathf.Min(clampedEnd, Slots.Count);
             for (int i = clampedStart; i < emptySearchEnd && remaining > 0; i++)
             {
                 var s = Slots[i];
-                if (!s.IsEmpty) continue;
+                if (s.ItemId != 0) continue;
 
                 int put = GetUnitsForNewStack(itemId, remaining);
                 Slots[i] = new InventorySlotState { ItemId = itemId, Count = put };
@@ -1116,7 +1141,7 @@ namespace RoachRace.Networking.Inventory
             if (idx < 0 || idx >= Slots.Count) return false;
 
             var s = Slots[idx];
-            if (s.IsEmpty) return false;
+            if (s.ItemId == 0 || s.Count <= 0) return false;
 
             itemId = s.ItemId;
             count = s.Count;
@@ -1152,10 +1177,18 @@ namespace RoachRace.Networking.Inventory
             if (idx < 0 || idx >= Slots.Count) return false;
 
             var s = Slots[idx];
-            if (s.IsEmpty) return false;
+            if (s.ItemId == 0 || s.Count <= 0) return false;
 
             if (s.Count <= 1)
-                Slots[idx] = default;
+            {
+                if (ShouldRemoveWhenDepleted(s.ItemId))
+                    Slots[idx] = default;
+                else
+                {
+                    s.Count = 0;
+                    Slots[idx] = s;
+                }
+            }
             else
             {
                 s.Count--;
@@ -1200,7 +1233,7 @@ namespace RoachRace.Networking.Inventory
             for (int i = 0; i < Slots.Count && remaining > 0; i++)
             {
                 var s = Slots[i];
-                if (s.IsEmpty) continue;
+                if (s.ItemId == 0) continue;
                 if (s.ItemId != itemId) continue;
 
                 int available = s.Count;
@@ -1211,9 +1244,17 @@ namespace RoachRace.Networking.Inventory
 
                 if (newCount <= 0)
                 {
-                    Slots[i] = default;
-                    if (i == selectedIdx)
-                        selectedBecameEmpty = true;
+                    if (TryGetDefinition(itemId, out var def) && def != null && !def.RemovesInventoryWhenDepleted)
+                    {
+                        s.Count = 0;
+                        Slots[i] = s;
+                    }
+                    else
+                    {
+                        Slots[i] = default;
+                        if (i == selectedIdx)
+                            selectedBecameEmpty = true;
+                    }
                 }
                 else
                 {
@@ -1233,7 +1274,7 @@ namespace RoachRace.Networking.Inventory
 
             int consumed = amount - remaining;
             if (consumed != 0)
-                NotifyServerDeltaObservers(-consumed, weaponIconKey, instigatorConnectionId, instigatorObjectId, hasSourceWorldPosition, sourceWorldPosition, hasTargetWorldPosition, targetWorldPosition);
+                NotifyServerDeltaObservers(itemId, -consumed, weaponIconKey, instigatorConnectionId, instigatorObjectId, hasSourceWorldPosition, sourceWorldPosition, hasTargetWorldPosition, targetWorldPosition);
 
             return consumed;
         }
@@ -1271,7 +1312,7 @@ namespace RoachRace.Networking.Inventory
         }
 
         [Server]
-        private void NotifyServerDeltaObservers(int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId, bool hasSourceWorldPosition, Vector3 sourceWorldPosition, bool hasTargetWorldPosition, Vector3 targetWorldPosition)
+        private void NotifyServerDeltaObservers(ushort itemId, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId, bool hasSourceWorldPosition, Vector3 sourceWorldPosition, bool hasTargetWorldPosition, Vector3 targetWorldPosition)
         {
             if (_serverDeltaObservers.Count == 0) return;
 
@@ -1279,8 +1320,9 @@ namespace RoachRace.Networking.Inventory
             foreach (var observer in _serverDeltaObservers.ToArray())
             {
                 if (observer == null) continue;
-                observer.OnServerInventoryItemDeltaApplied(
+                var delta = new NetworkPlayerInventoryDeltaContext(
                     this,
+                    itemId,
                     appliedDelta,
                     weaponIconKey,
                     instigatorConnectionId,
@@ -1289,6 +1331,8 @@ namespace RoachRace.Networking.Inventory
                     sourceWorldPosition,
                     hasTargetWorldPosition,
                     targetWorldPosition);
+
+                observer.OnServerInventoryItemDeltaApplied(in delta);
             }
         }
 
@@ -1308,7 +1352,7 @@ namespace RoachRace.Networking.Inventory
             for (int i = 0; i < Slots.Count; i++)
             {
                 var s = Slots[i];
-                if (s.IsEmpty) continue;
+                if (s.ItemId == 0 || s.Count <= 0) continue;
                 if (s.ItemId != itemId) continue;
                 total += s.Count;
             }
@@ -1341,7 +1385,7 @@ namespace RoachRace.Networking.Inventory
 
             // Monsters have no inventory; Ghost vs Survivor behavior differs.
             var slot = Slots[slotIndex];
-            if (slot.IsEmpty) return;
+            if (slot.ItemId == 0 || slot.Count <= 0) return;
         }
 
 
@@ -1356,7 +1400,7 @@ namespace RoachRace.Networking.Inventory
             }
 
             var slot = Slots[idx];
-            if (slot.IsEmpty)
+            if (slot.ItemId == 0 || slot.Count <= 0)
             {
                 ReportUseFailed(itemId: 0, slotIndex: idx, ItemUseFailReason.EmptySlot);
                 return false;
@@ -1430,6 +1474,17 @@ namespace RoachRace.Networking.Inventory
         }
 
         /// <summary>
+        /// Resolves whether a depleted inventory slot should be removed entirely.<br/>
+        /// Typical usage: consume and remove helpers call this so retained zero-count entries are governed by authored item rules rather than by caller-specific behavior.<br/>
+        /// </summary>
+        /// <param name="itemId">Item definition id to inspect.</param>
+        /// <returns><c>true</c> when the slot should be cleared at zero count; otherwise <c>false</c>.</returns>
+        private bool ShouldRemoveWhenDepleted(ushort itemId)
+        {
+            return !TryGetDefinition(itemId, out var def) || def == null || def.RemovesInventoryWhenDepleted;
+        }
+
+        /// <summary>
         /// Applies local item visibility (equip/unequip) to match the specified slot index.<br/>
         ///<br/>
         /// Typical behavior:<br/>
@@ -1450,7 +1505,7 @@ namespace RoachRace.Networking.Inventory
             }
 
             var slot = Slots[slotIndex];
-            if (slot.IsEmpty)
+            if (slot.ItemId == 0)
                 itemRegistry.HideAll();
             else
                 itemRegistry.SetOnlyActive(slot.ItemId);

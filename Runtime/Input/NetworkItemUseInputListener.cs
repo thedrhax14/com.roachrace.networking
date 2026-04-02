@@ -329,7 +329,7 @@ namespace RoachRace.Networking.Input
             for (int i = 0; i < slots.Count; i++)
             {
                 var s = slots[i];
-                if (s.IsEmpty) continue;
+                if (s.ItemId == 0 || s.Count <= 0) continue;
                 if (s.ItemId != config.ItemId) continue;
                 total += s.Count;
             }

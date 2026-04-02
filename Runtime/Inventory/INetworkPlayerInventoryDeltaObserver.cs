@@ -13,17 +13,10 @@ namespace RoachRace.Networking.Inventory
     {
         /// <summary>
         /// Called on the server after the inventory has applied a delta for typically one observed item.<br/>
-        /// Delta sign convention: negative = consumed, positive = added.
+        /// Delta sign convention: negative = consumed, positive = added.<br/>
+        /// Typical usage: inspect <paramref name="delta"/> to decide whether the observer should react to the item change, then use its item id and attribution fields to drive server-side gameplay or UI bridges.
         /// </summary>
-        /// <param name="inventory">The inventory which applied the delta.</param>
-        /// <param name="appliedDelta">The delta actually applied (may be smaller magnitude than requested).</param>
-        /// <param name="weaponIconKey">Optional UI-facing weapon key to attribute the delta (eg killfeed icon key). Empty when not applicable.</param>
-        /// <param name="instigatorConnectionId">ClientId of the instigator connection (real user), or -1 for environment/unknown.</param>
-        /// <param name="instigatorObjectId">NetworkObjectId of the instigator object (combat attribution), or -1 for environment/unknown.</param>
-        /// <param name="hasSourceWorldPosition">Whether a world-space source position was supplied for this delta.</param>
-        /// <param name="sourceWorldPosition">World-space origin of the effect or damage source when <paramref name="hasSourceWorldPosition"/> is true.</param>
-        /// <param name="hasTargetWorldPosition">Whether a world-space target hit point was supplied for this delta.</param>
-        /// <param name="targetWorldPosition">World-space hit point on the damaged target when <paramref name="hasTargetWorldPosition"/> is true.</param>
-        void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId, bool hasSourceWorldPosition, Vector3 sourceWorldPosition, bool hasTargetWorldPosition, Vector3 targetWorldPosition);
+        /// <param name="delta">Packed inventory delta context for the applied transaction.</param>
+        void OnServerInventoryItemDeltaApplied(in NetworkPlayerInventoryDeltaContext delta);
     }
 }

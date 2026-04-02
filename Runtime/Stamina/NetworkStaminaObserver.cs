@@ -158,18 +158,13 @@ namespace RoachRace.Networking
         /// Recalculates stamina after any authoritative inventory delta and republishes the current snapshot to clients when needed.<br/>
         /// Typical usage: the inventory invokes this after any item transaction; the observer re-reads the configured stamina item total and keeps UI state in sync.
         /// </summary>
-        /// <param name="inventory">The authoritative inventory that applied the delta.</param>
-        /// <param name="appliedDelta">The raw inventory delta that triggered recalculation.</param>
-        /// <param name="weaponIconKey">Unused for stamina, but preserved for observer compatibility.</param>
-        /// <param name="instigatorConnectionId">ClientId of the instigator connection, or -1 for environment/unknown.</param>
-        /// <param name="instigatorObjectId">NetworkObjectId of the instigator object, or -1 for environment/unknown.</param>
-        /// <param name="hasSourceWorldPosition">Whether a world-space source position was supplied for this delta.</param>
-        /// <param name="sourceWorldPosition">World-space origin of the effect or damage source when <paramref name="hasSourceWorldPosition"/> is true.</param>
-        /// <param name="hasTargetWorldPosition">Whether a world-space target hit point was supplied for this delta.</param>
-        /// <param name="targetWorldPosition">World-space hit point on the damaged target when <paramref name="hasTargetWorldPosition"/> is true.</param>
-        public void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId, bool hasSourceWorldPosition, Vector3 sourceWorldPosition, bool hasTargetWorldPosition, Vector3 targetWorldPosition)
+        /// <param name="delta">Packed inventory delta context for the applied transaction.</param>
+        public void OnServerInventoryItemDeltaApplied(in NetworkPlayerInventoryDeltaContext delta)
         {
-            if (!_serverSubscribed || inventory == null || staminaAsset == null)
+            if (!_serverSubscribed || delta.Inventory == null || staminaAsset == null)
+                return;
+
+            if (delta.ItemId != staminaAsset.id)
                 return;
 
             RefreshServerSnapshot();

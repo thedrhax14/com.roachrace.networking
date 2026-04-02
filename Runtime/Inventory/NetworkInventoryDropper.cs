@@ -66,7 +66,7 @@ namespace RoachRace.Networking
 
             // Peek selected stack first for droppable gating.
             var slot = inventory.GetSlot(inventory.SelectedSlotIndex);
-            if (slot.IsEmpty) return;
+            if (slot.ItemId == 0 || slot.Count <= 0) return;
 
             // Resolve definition for drop gating + prefab selection.
             NetworkObject prefabToSpawn = null;

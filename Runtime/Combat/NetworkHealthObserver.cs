@@ -152,21 +152,16 @@ namespace RoachRace.Networking.Combat
         /// Typical usage: <see cref="NetworkPlayerInventory"/> invokes this after an authoritative item delta; this method converts inventory-wide attribution into health-specific damage information.<br/>
         /// Configuration/context: only health loss produces a <see cref="NetworkHealthDamageInfo"/> notification; non-health inventory changes are ignored because they do not change the resolved health total.
         /// </summary>
-        /// <param name="inventory">The authoritative inventory that applied the delta.</param>
-        /// <param name="appliedDelta">The raw inventory delta that triggered recalculation.</param>
-        /// <param name="weaponIconKey">Optional UI-facing weapon/effect key supplied by the authoritative source.</param>
-        /// <param name="instigatorConnectionId">ClientId of the instigator connection, or -1 for environment/unknown.</param>
-        /// <param name="instigatorObjectId">NetworkObjectId of the instigator object, or -1 for environment/unknown.</param>
-        /// <param name="hasSourceWorldPosition">Whether a world-space source position was supplied for this hit.</param>
-        /// <param name="sourceWorldPosition">World-space source position when <paramref name="hasSourceWorldPosition"/> is true.</param>
-        /// <param name="hasTargetWorldPosition">Whether a world-space target hit point was supplied for this hit.</param>
-        /// <param name="targetWorldPosition">World-space hit point on the damaged target when <paramref name="hasTargetWorldPosition"/> is true.</param>
-        public void OnServerInventoryItemDeltaApplied(NetworkPlayerInventory inventory, int appliedDelta, string weaponIconKey, int instigatorConnectionId, int instigatorObjectId, bool hasSourceWorldPosition, Vector3 sourceWorldPosition, bool hasTargetWorldPosition, Vector3 targetWorldPosition)
+        /// <param name="delta">Packed inventory delta context for the applied transaction.</param>
+        public void OnServerInventoryItemDeltaApplied(in NetworkPlayerInventoryDeltaContext delta)
         {
             if (healthAsset == null)
                 return;
 
-            if (appliedDelta == 0)
+            if (delta.ItemId != healthAsset.id)
+                return;
+
+            if (delta.AppliedDelta == 0)
                 return;
 
             int previousHealth = currentHealth;
@@ -175,8 +170,8 @@ namespace RoachRace.Networking.Combat
             int damageAmount = Mathf.Max(0, previousHealth - nextHealth);
             if (damageAmount > 0)
             {
-                Vector3 resolvedTargetWorldPosition = hasTargetWorldPosition ? targetWorldPosition : transform.position;
-                var damageInfo = new NetworkHealthDamageInfo(previousHealth, nextHealth, damageAmount, weaponIconKey, instigatorConnectionId, instigatorObjectId, resolvedTargetWorldPosition, hasSourceWorldPosition, sourceWorldPosition);
+                Vector3 resolvedTargetWorldPosition = delta.HasTargetWorldPosition ? delta.TargetWorldPosition : transform.position;
+                var damageInfo = new NetworkHealthDamageInfo(previousHealth, nextHealth, damageAmount, delta.WeaponIconKey, delta.InstigatorConnectionId, delta.InstigatorObjectId, resolvedTargetWorldPosition, delta.HasSourceWorldPosition, delta.SourceWorldPosition);
                 NotifyServerDamageObservers(damageInfo);
             }
 
